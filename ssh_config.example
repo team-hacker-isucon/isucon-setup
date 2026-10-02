@@ -1,0 +1,13 @@
+# 手元 PC の ~/.ssh/config に追記するテンプレ。当日は IP を3行書き換えるだけ。
+# (10-add-members-keys.sh 実行後は全員 isucon ユーザーで直接入れる)
+Host isu1
+  HostName <当日発表のIP>
+  User isucon
+
+Host isu2
+  HostName <当日発表のIP>
+  User isucon
+
+Host isu3
+  HostName <当日発表のIP>
+  User isucon
