@@ -10,8 +10,11 @@ NGINX_ACCESS_LOG=/var/log/nginx/access.log
 MYSQL_SLOW_LOG=/var/log/mysql/mysql-slow.log
 
 # --- 触る前のフルバックアップ ---
+echo "== 1/4 バックアップ(tar は成功している間は無言。mysql データが大きいと数分かかる)=="
 mkdir -p "$BACKUP_DIR"
+echo "  - mysql ..."
 sudo tar -czf "$BACKUP_DIR/backup-$TIMESTAMP-mysql.tar.gz"   -C / var/lib/mysql       || true
+echo "  - nginx / systemd / webapp ..."
 sudo tar -czf "$BACKUP_DIR/backup-$TIMESTAMP-nginx.tar.gz"   -C / etc/nginx           || true
 sudo tar -czf "$BACKUP_DIR/backup-$TIMESTAMP-systemd.tar.gz" -C / etc/systemd/system  || true
 sudo tar -czf "$BACKUP_DIR/backup-$TIMESTAMP-webapp.tar.gz"  -C / home/isucon/webapp  || true
@@ -19,8 +22,11 @@ sudo tar -czf "$BACKUP_DIR/backup-$TIMESTAMP-webapp.tar.gz"  -C / home/isucon/we
 ls -lh "$BACKUP_DIR"
 
 # --- ツール ---
-sudo apt-get update
-sudo apt-get install -y percona-toolkit graphviz unzip vim dstat htop tmux
+echo "== 2/4 ツールインストール =="
+# NEEDRESTART_MODE=a: needrestart の「どのサービスを再起動するか」対話を自動化
+# (対象はシステム系サービスのみで nginx / mysql / アプリには影響しない)
+sudo DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get update
+sudo DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get install -y percona-toolkit graphviz unzip vim dstat htop tmux
 # alp(バージョンは事前に最新を確認しておく)
 # ⚠️ amd64 決め打ち。arm 環境の年なら alp_linux_arm64.zip に差し替える
 wget -q https://github.com/tkuchiki/alp/releases/download/v1.0.21/alp_linux_amd64.zip -O /tmp/alp.zip
@@ -30,12 +36,14 @@ sudo install /tmp/alp /usr/local/bin/alp
 go install github.com/tkuchiki/slp/cmd/slp@latest || echo "WARN: slp install failed(go が PATH に無い?後で入れ直せる)"
 
 # --- ログを isucon ユーザーでも読めるように(alp / slp / pprotein-agent 用)---
+echo "== 3/4 ログ読み取り権限 =="
 sudo chmod +rx /var/log/nginx || true
 sudo test -f "$NGINX_ACCESS_LOG" && sudo chmod +r "$NGINX_ACCESS_LOG" || true
 sudo chmod +rx /var/log/mysql || true
 sudo test -f "$MYSQL_SLOW_LOG" && sudo chmod +r "$MYSQL_SLOW_LOG" || true
 
 # --- git・エディタを vim に固定(nano 事故防止)---
+echo "== 4/4 git / エディタ設定 =="
 git config --global core.editor vim
 grep -q 'EDITOR=vim' ~/.bashrc || echo 'export EDITOR=vim VISUAL=vim' >> ~/.bashrc
 sudo update-alternatives --set editor /usr/bin/vim.basic || true
