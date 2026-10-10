@@ -13,9 +13,14 @@ PROTO=${2:-ssh}
 cd /home/isucon
 
 if [ "$PROTO" = "ssh" ]; then
-  # 先に認証を確認(鍵の配置忘れ・登録漏れならここで止める)
-  if ! ssh -o StrictHostKeyChecking=accept-new -T git@github.com 2>&1 | grep -q "successfully authenticated"; then
+  # 先に認証を確認(鍵の配置忘れ・登録漏れならここで止める)。
+  # 注意: ssh -T git@github.com は認証成功でも exit 1 を返すため、pipefail 下で
+  # パイプのまま判定すると常に失敗扱いになる。出力を変数に受けてから判定する
+  AUTH_MSG=$(ssh -o StrictHostKeyChecking=accept-new -T git@github.com 2>&1 || true)
+  if ! grep -q "successfully authenticated" <<<"$AUTH_MSG"; then
     echo "ERROR: GitHub の SSH 認証に失敗。デプロイキーの配置(~/.ssh/id_ed25519、chmod 600)と Deploy Keys 登録を確認する"
+    echo "--- ssh の出力 ---"
+    echo "$AUTH_MSG"
     exit 1
   fi
 fi
