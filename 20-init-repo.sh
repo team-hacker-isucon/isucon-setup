@@ -4,11 +4,11 @@
 #
 # 前提: デプロイキー配置済み(事前登録した秘密鍵を ~/.ssh/id_ed25519 に scp。README 参照)
 # 使い方(isucon ユーザーで、1台目のみ。2台目以降は README の合流手順):
-#   ./20-init-repo.sh <org>/<repo>          # デプロイキー方式(ssh URL)
-#   ./20-init-repo.sh <org>/<repo> https    # PAT 方式(https URL。フォールバック用)
+#   ./20-init-repo.sh                       # デプロイキー方式(ssh URL)。repo は既定で team-hacker-isucon/isucon-env
+#   ./20-init-repo.sh team-hacker-isucon/isucon-env https    # PAT 方式(https URL。フォールバック用)
 set -euo pipefail
 
-REPO=${1:?usage: 20-init-repo.sh <org>/<repo> [https]}
+REPO=${1:-team-hacker-isucon/isucon-env}
 PROTO=${2:-ssh}
 cd /home/isucon
 

@@ -9,7 +9,7 @@ ISUCON 当日の初動(鍵・git 化・ツール導入)スクリプト集。**�
 | リポジトリ | 役割 | 可視性 |
 | --- | --- | --- |
 | **isucon-setup**(これ) | 初動スクリプト。サーバーに最初に clone するもの | public |
-| **isucon-env** | 問題環境の git 管理(etc 取り込み/配布・build・解析の Makefile)。大会ごとに template から生成し、/home/isucon に合流させる | **private** |
+| **isucon-env** | 問題環境の git 管理(etc 取り込み/配布・build・解析の Makefile)。**今回の競技 repo そのもの**で、当日 /home/isucon に合流させる | **private** |
 
 ## 鍵の整理(2種類を混同しない)
 
@@ -28,17 +28,16 @@ ISUCON 当日の初動(鍵・git 化・ツール導入)スクリプト集。**�
 ## 事前準備(前日まで)
 
 ```sh
-# 1. isucon-env(template)から競技用 private repo を生成し、メンバーを Collaborator に招待
+# 1. isucon-env(= 今回の競技 repo)にメンバー全員を Collaborator として招待する
 
 # 2. 手元でデプロイキーを台数分生成
 for i in 1 2 3; do ssh-keygen -t ed25519 -N "" -f ./deploy_key_isu$i -C "isu$i"; done
 
-# 3. 3つの .pub を競技 repo の Settings → Deploy keys に UI から登録(Allow write access にチェック)
+# 3. 3つの .pub を isucon-env の Settings → Deploy keys に UI から登録(Allow write access にチェック)
 #    秘密鍵(deploy_key_isu*)は手元に保管。リポジトリにコミットしない・チャットに貼らない
 
-# 4. 10-add-members-keys.sh の MEMBERS にメンバーの GitHub ユーザー名を記入して push
-
-# 5. ssh_config.example を各自の ~/.ssh/config に追記(IP は当日埋める)
+# 4. ssh_config.example を各自の ~/.ssh/config に追記(IP は当日埋める)
+#    ※ 10-add-members-keys.sh の MEMBERS は記入済み(Lumonde-software / oshamashama / ryouta-uemura)
 ```
 
 ## 当日の初動(サーバーごと)
@@ -47,7 +46,7 @@ for i in 1 2 3; do ssh-keygen -t ed25519 -N "" -f ./deploy_key_isu$i -C "isu$i";
 # 0. 最初の1人がサーバーに入る(入口が ubuntu 等なら sudo -i -u isucon で isucon に切り替え)
 
 # 1. このリポジトリを clone(public なので認証不要)して鍵を登録
-git clone https://github.com/<org>/isucon-setup.git ~/isucon-setup
+git clone https://github.com/team-hacker-isucon/isucon-setup.git ~/isucon-setup
 cd ~/isucon-setup
 ./10-add-members-keys.sh        # 以後、全員 ssh isucon@<ip> で直接入れる
 
@@ -55,8 +54,8 @@ cd ~/isucon-setup
 scp ./deploy_key_isu1 isu1:.ssh/id_ed25519
 ssh isu1 'chmod 600 ~/.ssh/id_ed25519'
 
-# 3. /home/isucon を git 化して競技 repo と合流(1台目のみ)
-./20-init-repo.sh <org>/<repo>
+# 3. /home/isucon を git 化して競技 repo(team-hacker-isucon/isucon-env)と合流(1台目のみ)
+./20-init-repo.sh
 
 # 4. ツール導入 + git/エディタ設定(先頭で触る前のバックアップも取る)
 ./30-install-tools.sh
@@ -70,7 +69,7 @@ ssh isu1 'chmod 600 ~/.ssh/id_ed25519'
 ```sh
 cd /home/isucon
 git init -b main
-git remote add origin git@github.com:<org>/<repo>.git
+git remote add origin git@github.com:team-hacker-isucon/isucon-env.git
 git fetch origin
 git reset --hard origin/main
 ```
@@ -82,11 +81,11 @@ git reset --hard origin/main
 ```sh
 # GITHUB_TOKEN: fine-grained PAT(対象 repo 限定 + Administration: Read and write)。
 # 登録にしか使わないので、このコマンドだけ手元から実行してもよい
-GITHUB_TOKEN=<token> ./90-fallback-deploy-key.sh <org>/<repo>
+GITHUB_TOKEN=<token> ./90-fallback-deploy-key.sh
 
-# token も無い場合は引数なしで実行 → 表示された公開鍵を
-# repo の Settings → Deploy keys に手で貼る(Allow write access にチェック)
-./90-fallback-deploy-key.sh <org>/<repo>
+# token が無い場合は引数なしで実行 → 表示された公開鍵を
+# isucon-env の Settings → Deploy keys に手で貼る(Allow write access にチェック)
+./90-fallback-deploy-key.sh
 ```
 
 さらにもしもの時(SSH が全滅した等)は PAT の https 認証でも push できる: `git config --global credential.helper store` して、初回 fetch のプロンプトで Username = GitHub ユーザー名 / Password = PAT(Contents: Read and write)。~/.git-credentials に平文で残るので競技後に必ず revoke する。

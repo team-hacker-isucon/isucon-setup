@@ -3,9 +3,9 @@
 # 基本方式は事前登録(手元で鍵を生成して repo の Deploy Keys に UI から登録 → 当日 scp。README 参照)。
 # このスクリプトは事前準備を忘れた・秘密鍵を失くした場合に使う。
 #
-# 使い方:
-#   GITHUB_TOKEN=<token> ./90-fallback-deploy-key.sh <org>/<repo>   # curl で API 登録まで自動
-#   ./90-fallback-deploy-key.sh <org>/<repo>                        # 鍵生成・表示のみ(手動登録)
+# 使い方(repo は既定で team-hacker-isucon/isucon-env):
+#   GITHUB_TOKEN=<token> ./90-fallback-deploy-key.sh   # curl で API 登録まで自動
+#   ./90-fallback-deploy-key.sh                        # 鍵生成・表示のみ(手動登録)
 #
 # GITHUB_TOKEN は登録のときだけ使う(push は SSH 鍵なのでサーバーに token を残す必要はない)。
 # fine-grained PAT なら対象リポジトリ限定 + Administration: Read and write、
@@ -13,7 +13,7 @@
 # GitHub の Settings → Deploy keys に手で登録する(Allow write access にチェック)。
 set -euo pipefail
 
-REPO=${1:?usage: [GITHUB_TOKEN=<token>] 90-fallback-deploy-key.sh <org>/<repo>}
+REPO=${1:-team-hacker-isucon/isucon-env}
 
 if [ ! -f ~/.ssh/id_ed25519 ]; then
   ssh-keygen -t ed25519 -N "" -f ~/.ssh/id_ed25519

@@ -9,9 +9,9 @@
 set -euo pipefail
 
 MEMBERS=(
-  # "github-username-1"
-  # "github-username-2"
-  # "github-username-3"
+  "Lumonde-software"
+  "oshamashama"
+  "ryouta-uemura"
 )
 
 ISUCON_HOME=/home/isucon
