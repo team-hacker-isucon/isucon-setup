@@ -32,8 +32,19 @@ sudo DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get install -y percon
 wget -q https://github.com/tkuchiki/alp/releases/download/v1.0.21/alp_linux_amd64.zip -O /tmp/alp.zip
 unzip -o /tmp/alp.zip -d /tmp
 sudo install /tmp/alp /usr/local/bin/alp
-# slp(slow query log 版 alp。pt-query-digest より軽く読める)
-go install github.com/tkuchiki/slp/cmd/slp@latest || echo "WARN: slp install failed(go が PATH に無い?後で入れ直せる)"
+# slp(slow query log 版 alp。pt-query-digest より軽く読める)。
+# go は PATH に無いことがある(.bashrc の PATH 追記は非対話シェルで効かない)ので実体も探す
+GO_BIN=$(command -v go || true)
+if [ -z "$GO_BIN" ]; then
+  for cand in /home/isucon/local/go/bin/go /home/isucon/local/golang/bin/go /usr/local/go/bin/go; do
+    if [ -x "$cand" ]; then GO_BIN="$cand"; break; fi
+  done
+fi
+if [ -n "$GO_BIN" ]; then
+  "$GO_BIN" install github.com/tkuchiki/slp/cmd/slp@latest || echo "WARN: slp install failed"
+else
+  echo "WARN: go が見つからないため slp をスキップ。go の場所を確認して 'go install github.com/tkuchiki/slp/cmd/slp@latest' を実行する"
+fi
 
 # --- ログを isucon ユーザーでも読めるように(alp / slp / pprotein-agent 用)---
 echo "== 3/4 ログ読み取り権限 =="
