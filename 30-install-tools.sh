@@ -33,17 +33,19 @@ wget -q https://github.com/tkuchiki/alp/releases/download/v1.0.21/alp_linux_amd6
 unzip -o /tmp/alp.zip -d /tmp
 sudo install /tmp/alp /usr/local/bin/alp
 # slp(slow query log 版 alp。pt-query-digest より軽く読める)。
-# go は PATH に無いことがある(.bashrc の PATH 追記は非対話シェルで効かない)ので実体も探す
-GO_BIN=$(command -v go || true)
-if [ -z "$GO_BIN" ]; then
-  for cand in /home/isucon/local/go/bin/go /home/isucon/local/golang/bin/go /usr/local/go/bin/go; do
-    if [ -x "$cand" ]; then GO_BIN="$cand"; break; fi
-  done
-fi
-if [ -n "$GO_BIN" ]; then
-  "$GO_BIN" install github.com/tkuchiki/slp/cmd/slp@latest || echo "WARN: slp install failed"
+# alp と同じバイナリ配布を使う(go install は環境の Go が古いと失敗する。
+# 例: isucon11f は Go 1.17 で、slp の go.mod の toolchain ディレクティブを解釈できない)
+if wget -q https://github.com/tkuchiki/slp/releases/download/v0.2.3/slp_linux_amd64.tar.gz -O /tmp/slp.tar.gz; then
+  mkdir -p /tmp/slp-extract
+  tar -xzf /tmp/slp.tar.gz -C /tmp/slp-extract
+  SLP_BIN=$(find /tmp/slp-extract -name slp -type f | head -1)
+  if [ -n "$SLP_BIN" ]; then
+    sudo install "$SLP_BIN" /usr/local/bin/slp
+  else
+    echo "WARN: slp.tar.gz に slp バイナリが見つからない"
+  fi
 else
-  echo "WARN: go が見つからないため slp をスキップ。go の場所を確認して 'go install github.com/tkuchiki/slp/cmd/slp@latest' を実行する"
+  echo "WARN: slp のダウンロードに失敗(後で入れ直せる)"
 fi
 
 # --- ログを isucon ユーザーでも読めるように(alp / slp / pprotein-agent 用)---
