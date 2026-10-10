@@ -21,7 +21,8 @@ ISUCON 当日の初動(鍵・git 化・ツール導入)スクリプト集。**�
 
 ### 2. デプロイキー(サーバー → GitHub)
 
-- **基本方式: 事前登録**。手元で台数分の鍵ペアを生成し、isucon-env から生成した競技 repo の Settings → Deploy keys に **UI から事前登録**しておく(Allow write access にチェック)。当日は秘密鍵を scp するだけ
+- **基本方式: 事前登録**。手元で鍵ペアを**1本**生成し、isucon-env の Settings → Deploy keys に **UI から事前登録**しておく(Allow write access にチェック)。当日は同じ秘密鍵を3台に scp するだけ
+- 一般原則では「サーバーごとに鍵を分ける」(侵害時にその1台分だけ失効できる)が、単回利用・競技後に鍵自体を削除する今回の運用では分離の利点が薄いため、1本共用で簡素化している
 - もしもの時(事前準備を忘れた・鍵を失くした)は `90-fallback-deploy-key.sh` で当日生成して登録する(後述)
 - 方針: **gh など特定目的のツールは入れない**。GitHub API の操作が要る場合も curl で行う
 
@@ -30,11 +31,11 @@ ISUCON 当日の初動(鍵・git 化・ツール導入)スクリプト集。**�
 ```sh
 # 1. isucon-env(= 今回の競技 repo)にメンバー全員を Collaborator として招待する
 
-# 2. 手元でデプロイキーを台数分生成
-for i in 1 2 3; do ssh-keygen -t ed25519 -N "" -f ./deploy_key_isu$i -C "isu$i"; done
+# 2. 手元でデプロイキーを1本生成(3台で同じ鍵を共用)
+ssh-keygen -t ed25519 -N "" -f ./deploy_key -C "isucon-deploy"
 
-# 3. 3つの .pub を isucon-env の Settings → Deploy keys に UI から登録(Allow write access にチェック)
-#    秘密鍵(deploy_key_isu*)は手元に保管。リポジトリにコミットしない・チャットに貼らない
+# 3. deploy_key.pub を isucon-env の Settings → Deploy keys に UI から登録(Allow write access にチェック)
+#    秘密鍵(deploy_key)は手元に保管。リポジトリにコミットしない・チャットに貼らない
 
 # 4. ssh_config.example を各自の ~/.ssh/config に追記(IP は当日埋める)
 #    ※ 10-add-members-keys.sh の MEMBERS は記入済み(Lumonde-software / oshamashama / ryouta-uemura)
@@ -51,7 +52,7 @@ cd ~/isucon-setup
 ./10-add-members-keys.sh        # 以後、全員 ssh isucon@<ip> で直接入れる
 
 # 2. 手元から: ssh_config の IP を埋める → デプロイキーを配置
-scp ./deploy_key_isu1 isu1:.ssh/id_ed25519
+scp ./deploy_key isu1:.ssh/id_ed25519    # isu2 / isu3 にも同じ鍵を配る
 ssh isu1 'chmod 600 ~/.ssh/id_ed25519'
 
 # 3. /home/isucon を git 化して競技 repo(team-hacker-isucon/isucon-env)と合流(1台目のみ)
