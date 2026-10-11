@@ -58,6 +58,11 @@ sudo test -f "$MYSQL_SLOW_LOG" && sudo chmod +r "$MYSQL_SLOW_LOG" || true
 # --- git・エディタを vim に固定(nano 事故防止)---
 echo "== 4/4 git / エディタ設定 =="
 git config --global core.editor vim
+# pull 時の「divergent branches をどう解決するか」の質問を止め、履歴を線形に保つ
+git config --global pull.rebase true
+# 初回 push の「--set-upstream しろ」を省略(git 2.37+ で有効。Ubuntu 22.04 の 2.34 では
+# 効かないが無害。古い git では s2/s3 合流手順の `git branch -u origin/main main` が代わり)
+git config --global push.autoSetupRemote true
 grep -q 'EDITOR=vim' ~/.bashrc || echo 'export EDITOR=vim VISUAL=vim' >> ~/.bashrc
 sudo update-alternatives --set editor /usr/bin/vim.basic || true
 cat > ~/.vimrc <<'EOF'

@@ -73,6 +73,7 @@ git init -b main
 git remote add origin git@github.com:team-hacker-isucon/isucon-env.git
 git fetch origin
 git reset --hard origin/main
+git branch -u origin/main main   # 初回 push で --set-upstream を聞かれないように
 ```
 
 ## フォールバック: デプロイキーを当日生成して登録する
