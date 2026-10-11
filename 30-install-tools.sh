@@ -57,6 +57,10 @@ sudo test -f "$MYSQL_SLOW_LOG" && sudo chmod +r "$MYSQL_SLOW_LOG" || true
 
 # --- git・エディタを vim に固定(nano 事故防止)---
 echo "== 4/4 git / エディタ設定 =="
+# identity(未設定だと commit が失敗する)。1台目は 20-init-repo.sh でも設定されるが、
+# 20 を実行しない s2/s3 のためにここでも設定する(冪等なので重複は無害)
+git config --global user.email isucon@example.com
+git config --global user.name "$(hostname)"
 git config --global core.editor vim
 # pull 時の「divergent branches をどう解決するか」の質問を止め、履歴を線形に保つ
 git config --global pull.rebase true
