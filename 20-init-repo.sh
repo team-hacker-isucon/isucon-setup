@@ -46,7 +46,9 @@ node_modules/
 /go/
 # setup リポジトリの clone(競技 repo には入れない)
 /isucon-setup/
-# ホーム直下の作業ノイズ・シェル設定(30-install-tools.sh が各台で同じものを作るので共有不要)
+# ホーム直下の作業ノイズ・シェル設定(30-install-tools.sh が各台で同じものを作るので共有不要)。
+# .gitconfig は user.name がサーバーごとに違う(hostname)ので共有すると識別が壊れる
+/.gitconfig
 /.bashrc
 /.profile
 /.vimrc
