@@ -46,6 +46,16 @@ node_modules/
 /go/
 # setup リポジトリの clone(競技 repo には入れない)
 /isucon-setup/
+# ホーム直下の作業ノイズ・シェル設定(30-install-tools.sh が各台で同じものを作るので共有不要)
+/.bashrc
+/.profile
+/.vimrc
+/.viminfo
+/.lesshst
+/.mysql_history
+/.wget-hsts
+/.sudo_as_admin_successful
+/.selected_editor
 # pprotein が cwd(/home/isucon)に作る収集データ
 /data/
 # SERVER_ID 宣言(make set-as-s1 が書く。中身がサーバーごとに違うので共有しない。
