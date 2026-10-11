@@ -27,15 +27,17 @@ echo "== 2/4 ツールインストール =="
 # (対象はシステム系サービスのみで nginx / mysql / アプリには影響しない)
 sudo DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get update
 sudo DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get install -y percona-toolkit graphviz unzip vim dstat htop tmux
+# CPU アーキテクチャ自動判定(amd64 / arm64。multipass on Apple Silicon は arm64)。
+# 合わないバイナリを入れると「Syntax error: word unexpected」という不可解なエラーになる
+ARCH=$(dpkg --print-architecture)
 # alp(バージョンは事前に最新を確認しておく)
-# ⚠️ amd64 決め打ち。arm 環境の年なら alp_linux_arm64.zip に差し替える
-wget -q https://github.com/tkuchiki/alp/releases/download/v1.0.21/alp_linux_amd64.zip -O /tmp/alp.zip
+wget -q "https://github.com/tkuchiki/alp/releases/download/v1.0.21/alp_linux_${ARCH}.zip" -O /tmp/alp.zip
 unzip -o /tmp/alp.zip -d /tmp
 sudo install /tmp/alp /usr/local/bin/alp
 # slp(slow query log 版 alp。pt-query-digest より軽く読める)。
 # alp と同じバイナリ配布を使う(go install は環境の Go が古いと失敗する。
 # 例: isucon11f は Go 1.17 で、slp の go.mod の toolchain ディレクティブを解釈できない)
-if wget -q https://github.com/tkuchiki/slp/releases/download/v0.2.3/slp_linux_amd64.tar.gz -O /tmp/slp.tar.gz; then
+if wget -q "https://github.com/tkuchiki/slp/releases/download/v0.2.3/slp_linux_${ARCH}.tar.gz" -O /tmp/slp.tar.gz; then
   mkdir -p /tmp/slp-extract
   tar -xzf /tmp/slp.tar.gz -C /tmp/slp-extract
   SLP_BIN=$(find /tmp/slp-extract -name slp -type f | head -1)
