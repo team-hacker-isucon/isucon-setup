@@ -78,4 +78,17 @@ set hlsearch incsearch ignorecase smartcase
 syntax on
 EOF
 
+# tmux(prefix は C-b から C-q に変更。C-b はシェルのカーソル移動と衝突するため)
+cat > ~/.tmux.conf <<'EOF'
+set -g prefix C-q
+unbind C-b
+bind C-q send-prefix
+set -g mouse on
+set -g history-limit 50000
+setw -g mode-keys vi
+# ペイン分割を直感的なキーに(| で縦、- で横)
+bind | split-window -h
+bind - split-window -v
+EOF
+
 echo "== done =="
