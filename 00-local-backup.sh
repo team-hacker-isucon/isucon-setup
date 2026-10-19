@@ -5,19 +5,21 @@
 #
 # 使い方(引数は ~/.ssh/config の Host 名):
 #   ./00-local-backup.sh isu1 isu2 isu3
-#   OUT_DIR=~/isucon-backup ./00-local-backup.sh isu1   # 出力先を変える場合(既定 ./backup)
+#   OUT_DIR=~/isucon-backup ./00-local-backup.sh isu1   # 出力先を変える場合(既定はこのスクリプトと同じ場所の backup/)
 #
 # 出力: <OUT_DIR>/<host>-<時刻>-home-isucon.tar.gz と <host>-<時刻>-etc.tar.gz
 # macOS の bash 3.2 でも動くように書く(連想配列・GNU 拡張の date/stat は使わない)。
 # backup/ は git 管理しない(.gitignore 済み)。中身にデプロイ秘密鍵等も含まれ得るので共有しない
 set -uo pipefail
+# 中身に env.sh・debian.cnf・authorized_keys 等が入るので、自分だけが読めるように作る
+umask 077
 
 if [ $# -lt 1 ]; then
   echo "usage: $0 <host> [<host> ...]   例: $0 isu1 isu2 isu3"
   exit 1
 fi
 
-OUT_DIR=${OUT_DIR:-./backup}
+OUT_DIR=${OUT_DIR:-$(cd "$(dirname "$0")" && pwd)/backup}
 TS=$(date +%Y%m%d-%H%M%S)
 # BatchMode: パスワード入力待ちで止まらないように。当日の新しい IP は host key を自動で受け入れる
 SSH_OPTS=(-o BatchMode=yes -o ConnectTimeout=10 -o StrictHostKeyChecking=accept-new)
@@ -25,6 +27,18 @@ mkdir -p "$OUT_DIR"
 
 FAILED=()
 WARNED=()
+
+# tar の exit 2 は「読めないファイルがあった」でも出る。gzip として完結していれば
+# 部分バックアップとして残す(無いよりまし)。空・壊れているなら失敗扱いで消す
+keep_or_remove() {
+  local out=$1 label=$2 rc=$3
+  if [ -s "$out" ] && gzip -t "$out" 2>/dev/null; then
+    WARNED+=("$label: tar が exit ${rc}。読めないファイルがあった可能性。部分バックアップとして残す($out)")
+  else
+    FAILED+=("$label の取得失敗(exit $rc)")
+    rm -f "$out"
+  fi
+}
 i=0
 for host in "$@"; do
   i=$((i + 1))
@@ -47,8 +61,7 @@ for host in "$@"; do
   if [ "$rc" -eq 1 ]; then
     WARNED+=("$host: /home/isucon の tar が警告付きで終了(exit 1。一部ファイルが読み取り中に変化)")
   elif [ "$rc" -ne 0 ]; then
-    FAILED+=("$host: /home/isucon の取得失敗(exit $rc)")
-    rm -f "$out"
+    keep_or_remove "$out" "$host: /home/isucon" "$rc"
   fi
 
   # /etc 配下の設定(sudo が要る。存在するものだけ渡す。MariaDB 環境等で /etc/mysql が無いこともある)
@@ -62,8 +75,7 @@ for host in "$@"; do
     if [ "$rc" -eq 1 ]; then
       WARNED+=("$host: /etc の tar が警告付きで終了(exit 1)")
     elif [ "$rc" -ne 0 ]; then
-      FAILED+=("$host: /etc の取得失敗(exit $rc)")
-      rm -f "$out"
+      keep_or_remove "$out" "$host: /etc" "$rc"
     fi
   else
     WARNED+=("$host: sudo が非対話で使えないため /etc の取得をスキップ")
