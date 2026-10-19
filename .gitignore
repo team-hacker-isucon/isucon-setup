@@ -1,5 +1,7 @@
 # 00-local-backup.sh の出力(サーバーの中身そのもの。秘密鍵も含み得るので絶対に commit しない)
 backup/
+# 01-fetch-results.sh の出力(実際のクエリやデータを含む解析結果)
+fetched/
 # 事前準備で手元生成するデプロイキー(ここで生成してしまった場合の事故防止)
 /deploy_key
 /deploy_key.pub

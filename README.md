@@ -127,6 +127,19 @@ git status --short               # 1台目で消した言語実装(webapp/nodejs
 # rm -rf webapp/<lang>           # → 消しておく(git add -A で復活させないように)
 ```
 
+## 解析結果を手元に取ってくる(手元の AI エージェントに渡す)
+
+`make analyze` / `make pprof-record` の結果は各サーバーの `analysis/` と `pprof/` にたまる。手元で動かす AI エージェントに読ませるときは、**手元 PC で** `01-fetch-results.sh` を実行してコピーする(エージェントに競技サーバーへの ssh を渡さずに済む)。
+
+```sh
+./01-fetch-results.sh isu1 isu2 isu3   # 何度実行しても差分だけ取る(rsync が無ければ tar で丸ごと)
+```
+
+- 出力: `fetched/<host>/analysis/<時刻>/`(alp.txt / slow-query.txt)と `fetched/<host>/pprof/`。手元に go があれば pprof ごとに要約テキスト `*.top.txt` も作る
+- コードはコピー不要(エージェントは手元に clone した競技 repo で `git pull` して読む)
+- 生ログ(access.log / slow log)は大きすぎるので取らない。先に `make analyze` で要約する
+- `fetched/` は git 管理しない。中身は競技データなので外部へ公開・共有しない(外部の AI サービスに送ってよいかは、その年のレギュレーションで事前に確認する)
+
 ## ログ
 
 10 / 20 / 30 / 90 は実行した全コマンドを時刻付きで表示し、同じ内容をログファイルにも残す(失敗時は何行目の何のコマンドで止まったかとログの場所が出る)。
