@@ -3,6 +3,8 @@
 # 先頭で「触る前のフルバックアップ」を取る(初期データを壊しても戻せる保険。
 # mysqld を止めずに固めるので厳密ではないが、開始直後の無負荷なら実用上戻せる)。
 set -euo pipefail
+source "$(dirname "${BASH_SOURCE[0]}")/lib/log.sh"
+log_start "触る前のバックアップ + ツール導入 + ログ権限 + git/エディタ/tmux 設定"
 
 TIMESTAMP=$(date +%Y%m%d-%H%M%S)
 BACKUP_DIR=/home/isucon/local          # 競技 repo の .gitignore 対象(local/)
@@ -10,7 +12,7 @@ NGINX_ACCESS_LOG=/var/log/nginx/access.log
 MYSQL_SLOW_LOG=/var/log/mysql/mysql-slow.log
 
 # --- 触る前のフルバックアップ ---
-echo "== 1/4 バックアップ(tar は成功している間は無言。mysql データが大きいと数分かかる)=="
+echo "== [1/4] バックアップ(tar は成功している間は無言。mysql データが大きいと数分かかる)=="
 mkdir -p "$BACKUP_DIR"
 echo "  - mysql ..."
 sudo tar -czf "$BACKUP_DIR/backup-$TIMESTAMP-mysql.tar.gz"   -C / var/lib/mysql       || true
@@ -22,7 +24,7 @@ sudo tar -czf "$BACKUP_DIR/backup-$TIMESTAMP-webapp.tar.gz"  -C / home/isucon/we
 ls -lh "$BACKUP_DIR"
 
 # --- ツール ---
-echo "== 2/4 ツールインストール =="
+echo "== [2/4] ツールインストール =="
 # NEEDRESTART_MODE=a: needrestart の「どのサービスを再起動するか」対話を自動化
 # (対象はシステム系サービスのみで nginx / mysql / アプリには影響しない)
 sudo DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get update
@@ -51,14 +53,14 @@ else
 fi
 
 # --- ログを isucon ユーザーでも読めるように(alp / slp / pprotein-agent 用)---
-echo "== 3/4 ログ読み取り権限 =="
+echo "== [3/4] ログ読み取り権限 =="
 sudo chmod +rx /var/log/nginx || true
 sudo test -f "$NGINX_ACCESS_LOG" && sudo chmod +r "$NGINX_ACCESS_LOG" || true
 sudo chmod +rx /var/log/mysql || true
 sudo test -f "$MYSQL_SLOW_LOG" && sudo chmod +r "$MYSQL_SLOW_LOG" || true
 
 # --- git・エディタを vim に固定(nano 事故防止)---
-echo "== 4/4 git / エディタ設定 =="
+echo "== [4/4] git / エディタ設定 =="
 # identity(未設定だと commit が失敗する)。1台目は 20-init-repo.sh でも設定されるが、
 # 20 を実行しない s2/s3 のためにここでも設定する(冪等なので重複は無害)
 git config --global user.email isucon@example.com
@@ -91,4 +93,5 @@ bind | split-window -h
 bind - split-window -v
 EOF
 
+{ set +x; } 2>/dev/null
 echo "== done =="

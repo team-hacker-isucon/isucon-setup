@@ -12,9 +12,12 @@
 # classic PAT なら repo スコープが必要。token を用意しない場合は、表示される公開鍵を
 # GitHub の Settings → Deploy keys に手で登録する(Allow write access にチェック)。
 set -euo pipefail
+source "$(dirname "${BASH_SOURCE[0]}")/lib/log.sh"
+log_start "デプロイキーを当日生成し、(GITHUB_TOKEN があれば)GitHub に登録する"
 
 REPO=${1:-team-hacker-isucon/isucon-env}
 
+echo "== [1/3] 鍵の生成 =="
 if [ ! -f ~/.ssh/id_ed25519 ]; then
   ssh-keygen -t ed25519 -N "" -f ~/.ssh/id_ed25519
 fi
@@ -23,6 +26,10 @@ PUBKEY=$(cat ~/.ssh/id_ed25519.pub)
 echo "== 公開鍵 =="
 echo "${PUBKEY}"
 
+echo "== [2/3] Deploy key の登録 =="
+# token が set -x のトレース(= 画面とログファイル)に展開されて残らないよう、
+# GITHUB_TOKEN を参照する区間はトレースを止める
+{ set +x; } 2>/dev/null
 if [ -n "${GITHUB_TOKEN:-}" ]; then
   if curl -fsS -X POST \
     -H "Authorization: Bearer ${GITHUB_TOKEN}" \
@@ -37,6 +44,7 @@ if [ -n "${GITHUB_TOKEN:-}" ]; then
 else
   echo "== GITHUB_TOKEN 未設定のため自動登録をスキップ。上の公開鍵を Deploy keys に手動登録してください =="
 fi
+set -x
 
-echo "== 接続確認('successfully authenticated' が出れば OK)=="
+echo "== [3/3] 接続確認('successfully authenticated' が出れば OK)=="
 ssh -o StrictHostKeyChecking=accept-new -T git@github.com || true
