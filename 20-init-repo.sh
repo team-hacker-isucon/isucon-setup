@@ -165,6 +165,16 @@ analysis/
 pprof/
 EOF
 
+# ビルド成果物(コンパイル済みの実行ファイル)は commit しない。ファイル名は問題・言語ごとに
+# 違うので、中身の先頭4バイト(ELF マジック)で判定して .gitignore に足す
+echo "# ビルド成果物(20-init-repo.sh が ELF 判定で自動追加)" >> .gitignore
+while IFS= read -r -d '' f; do
+  if [ "$(head -c 4 "$f" 2>/dev/null | od -An -tx1 | tr -d ' \n')" = "7f454c46" ]; then
+    echo "/$f" >> .gitignore
+    echo "  ignore(ビルド成果物): $f"
+  fi
+done < <(git ls-files -o --exclude-standard -z -- webapp)
+
 # GitHub は 100MB 超のファイルを拒否する。最後の push だけが失敗すると再実行もできなくなるので、
 # 何も commit していない今のうちに検査する(50MB 超は警告対象にもなるので止める)
 BIG_FILES=$(git ls-files -o --exclude-standard -z | xargs -0 -r du -k -- | awk '$1 > 50 * 1024' || true)

@@ -97,6 +97,10 @@ setw -g mode-keys vi
 # ペイン分割を直感的なキーに(| で縦、- で横)
 bind | split-window -h
 bind - split-window -v
+# 全ペイン録画: 新しいウィンドウ/ペインは util-linux の script 経由で起動し、タイミング付きで記録する。
+# 保存先 ~/local/tmux-rec は競技 repo で gitignore 済み。録画の起動に失敗したら素の bash にする。
+# 画面に出たものは全部残る(秘密を画面に出さない)。録画しないペインは prefix : new-window bash
+set -g default-command 'd=$HOME/local/tmux-rec; mkdir -p "$d"; f="$d/$(hostname -s)-$(date +%Y%m%d-%H%M%S)-p${TMUX_PANE#%}"; script -q -f -m advanced -T "$f.tm" -O "$f.out" -c "exec bash -l" || exec bash -l'
 EOF
 
 { set +x; } 2>/dev/null

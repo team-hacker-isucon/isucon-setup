@@ -136,6 +136,27 @@ git status --short               # 1台目で消した言語実装(webapp/nodejs
 - 00 は手元で実行するため、毎行ログの対象外(結果のサマリだけ画面に出る)
 - 20 は git 化以降のフェーズで失敗すると、失敗表示の中に復旧コマンド(下記)を出す
 
+## tmux の全ペイン録画
+
+30 が配る `~/.tmux.conf` で、**tmux の新しいウィンドウ/ペインはすべて自動で録画**される(util-linux の `script` を使うので追加インストール不要)。あとからタイミング付きで再生できる。
+
+- 保存先: `~/local/tmux-rec/<ホスト名>-<開始時刻>-p<ペイン番号>.{tm,out}`(競技 repo で gitignore 済み)
+- 設定前から開いているペインは録画されない。30 の実行後は tmux を起動し直す
+- 録画しないペインを開くとき: `prefix :` → `new-window bash`
+
+```sh
+ls -lt ~/local/tmux-rec/                                      # 一覧
+scriptreplay -T X.tm -O X.out -m 1 -d 4                       # 無操作の待ちを最大1秒に詰めて 4倍速で再生
+grep -a 'make bench' ~/local/tmux-rec/*.out                   # 中身を文字列検索
+ssh -t isu1 scriptreplay -T local/tmux-rec/X.tm -O local/tmux-rec/X.out -m 1   # 手元から再生
+```
+
+注意:
+- **画面に出たものは秘密も含めて全部残る**(webhook URL、`mysql -p<パスワード>`、貼り付けた token など)。秘密は `read -rs` で入力するなど画面に出さない。録画ファイルを Discord 等に貼らない
+- ウィンドウ名が全部 `script` になる(tmux から見た前景プロセスが script のため)。名前は `prefix ,` で付ける
+- 再生側の端末がペインより小さいと vim / htop の画面が崩れる。途中へのシークはできない(`-m` / `-d` で早送り)
+- ディスクを使い続ける(出力量に比例。`journalctl -f` や htop を長く流すペインが大きい)。ときどき `du -sh ~/local/tmux-rec` で確認する
+
 ## フォールバック: デプロイキーを当日生成して登録する
 
 事前登録を忘れた・秘密鍵を持ってくるのを忘れた場合。サーバー上で鍵を生成し、GitHub REST API(curl)で登録する:
