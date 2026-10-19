@@ -16,7 +16,10 @@ ISUCON 当日の初動(鍵・git 化・ツール導入)スクリプト集。**�
 ### 1. 個人鍵(メンバー → サーバー)
 
 - 競技サーバーの作業ユーザーは `isucon`。**メンバー全員の GitHub 公開鍵を isucon ユーザーの authorized_keys に追記**し、以後は全員 `ssh isucon@<ip>` で直接入る
-- 入口が `ubuntu` 等の別ユーザーの環境(EC2 素の構成や multipass)では、ポータル/クラウドが配置した鍵で最初の1人だけが入れる。その1人が `sudo -i -u isucon` してこのリポジトリを clone し、`10-add-members-keys.sh` を実行すれば、**以後は全員 isucon 直ログイン**になる(ubuntu 側に鍵を足す必要はない。sudo 経由の入り方はこの初回だけ)
+- 入口が `ubuntu` 等の別ユーザーの環境(EC2 素の構成や multipass)では、ポータル/クラウドが配置した鍵で最初の1人だけが入れる。その1人が `sudo -i -u isucon` してこのリポジトリを clone し、`10-add-members-keys.sh` を実行すれば、**以後は全員 isucon 直ログイン**になる
+- 10 は保険として**入口ユーザー(ubuntu 等)にも同じ鍵を入れる**。sshd_config の `AllowUsers` / `AllowGroups` / `DenyUsers` 等で isucon への直接 ssh が拒否される環境でも、全員が入口ユーザー経由(`ssh ubuntu@<ip>` → `sudo -i -u isucon`)で入れるように
+  - 入口ユーザーは `ENTRY_USER` > `SUDO_USER`(`sudo -i -u isucon` 経由ならここに入る)> 実行ユーザー > `ubuntu` の順に決める(isucon / root は除外。見つからなければ WARN を出してスキップ)
+  - 10 は `sudo sshd -T` で実効設定を見て、isucon / 入口ユーザーが拒否され得る設定があれば WARN を出す。WARN が出たら拒否されない方のユーザーで入る
 - 近年の ISUCON 本番(11〜14)はポータルに登録した公開鍵が cloud-init で isucon に配置されるので、最初から isucon 直ログインできることが多い
 
 ### 2. デプロイキー(サーバー → GitHub)
@@ -38,24 +41,32 @@ ssh-keygen -t ed25519 -N "" -f ./deploy_key -C "isucon-deploy"
 #    秘密鍵(deploy_key)は手元に保管。リポジトリにコミットしない・チャットに貼らない
 
 # 4. ssh_config.example を各自の ~/.ssh/config に追記(IP は当日埋める)
+#    手元の作業ディレクトリ(このリポジトリの clone)で 00-local-backup.sh を使う。backup/ は git 管理しない(.gitignore 済み)
 #    ※ 10-add-members-keys.sh の MEMBERS は記入済み(Lumonde-software / oshamashama / ryouta-uemura)
 ```
 
 ## 当日の初動(サーバーごと)
 
 ```sh
-# 0. 最初の1人がサーバーに入る(入口が ubuntu 等なら sudo -i -u isucon で isucon に切り替え)
+# 0. 手元から: ssh_config の IP を埋める → 何かを触る前に初期状態を手元にバックアップ(全台まとめて)
+#    backup/<host>-<時刻>-home-isucon.tar.gz と -etc.tar.gz(/etc/nginx, /etc/mysql, /etc/systemd/system)ができる
+#    isucon で入れない環境(入口が ubuntu だけ)なら、ssh_config の User を一時的に入口ユーザーにして実行するか、
+#    10 の後に実行する(sudo が非対話で使えれば /home/isucon も sudo tar で取る)
+./00-local-backup.sh isu1 isu2 isu3
 
-# 1. このリポジトリを clone(public なので認証不要)して鍵を登録
+# 1. 最初の1人がサーバーに入る(入口が ubuntu 等なら sudo -i -u isucon で isucon に切り替え)
+#    このリポジトリを clone(public なので認証不要)して鍵を登録
 git clone https://github.com/team-hacker-isucon/isucon-setup.git ~/isucon-setup
 cd ~/isucon-setup
-./10-add-members-keys.sh        # 以後、全員 ssh isucon@<ip> で直接入れる
+./10-add-members-keys.sh        # 以後、全員 ssh isucon@<ip> で直接入れる(入口ユーザーにも同じ鍵が入る)
 
-# 2. 手元から: ssh_config の IP を埋める → デプロイキーを配置
+# 2. 手元から: デプロイキーを配置
 scp ./deploy_key isu1:.ssh/id_ed25519    # isu2 / isu3 にも同じ鍵を配る
 ssh isu1 'chmod 600 ~/.ssh/id_ed25519'
 
 # 3. /home/isucon を git 化して競技 repo(team-hacker-isucon/isucon-env)と合流(1台目のみ)
+#    git 化の前に /home/isucon を /home/isucon_archive_<時刻> へ丸ごとコピーし、
+#    initial commit(全言語入り)の後に Go 以外の実装を別 commit で消してから合流する(詳細は下)
 ./20-init-repo.sh
 
 # 4. ツール導入 + git/エディタ設定(先頭で触る前のバックアップも取る)
@@ -64,6 +75,24 @@ ssh isu1 'chmod 600 ~/.ssh/id_ed25519'
 # 5. 以後は競技 repo 側(/home/isucon の Makefile)で作業
 #    make set-as-s1 → make get-conf → …(isucon-env の README 参照)
 ```
+
+### 20-init-repo.sh の安全装置と環境変数
+
+- 実行前チェック: 次のどれかに当たると、理由を表示して**何も変更せずに** exit 1 する
+  - `/home/isucon` が無い / isucon ユーザーで実行していない
+  - `/home/isucon/.git` が既にある(二重実行防止。2台目以降は下の合流手順)
+  - `/home/isucon/webapp` が無い(想定と違う構成。`ls -la /home/isucon` を表示して止まる)
+- 自動アーカイブ: `.gitignore` 作成や `merge -X theirs`(README.md / Makefile 等の上書き)より前に `sudo cp -a /home/isucon /home/isucon_archive_<時刻>` を取る。`du` / `df` を表示し、空きが「サイズ + 1GB」未満なら止まる
+- 言語実装の削除: initial commit の次の commit で `webapp/` 配下の既知の言語ディレクトリ(nodejs, php, python, ruby, rust など)を `git rm -r` する。`frontend` / `sql` / `public` など言語名でないものは消さない。戻すときは `git checkout <initial commit> -- webapp/<lang>`(サマリに hash が出る)
+
+| 環境変数 | 既定 | 意味 |
+| --- | --- | --- |
+| `FORCE=1` | なし | `webapp/` が無くても続行する |
+| `SKIP_ARCHIVE=1` | なし | 自動アーカイブを省略する(容量不足で止まったとき。00 の手元バックアップがある前提) |
+| `KEEP_LANG` | `go` | 残す言語。カンマ区切りで複数可(例: `KEEP_LANG=go,rust`) |
+| `NO_PRUNE_LANG=1` | なし | 言語実装の削除をしない |
+
+## 2台目以降の合流
 
 2台目以降(s2/s3)は 20-init-repo.sh ではなく、既存の /home/isucon に重ねる(初期状態は全台同一なので reset --hard で安全):
 
@@ -74,7 +103,16 @@ git remote add origin git@github.com:team-hacker-isucon/isucon-env.git
 git fetch origin
 git reset --hard origin/main
 git branch -u origin/main main   # 初回 push で --set-upstream を聞かれないように
+git status --short               # 1台目で消した言語実装(webapp/nodejs 等)は未追跡として残る
+# rm -rf webapp/<lang>           # → 消しておく(git add -A で復活させないように)
 ```
+
+## ログ
+
+10 / 20 / 30 / 90 は実行した全コマンドを時刻付きで表示し、同じ内容をログファイルにも残す(失敗時は何行目の何のコマンドで止まったかとログの場所が出る)。
+
+- 置き場所: `/home/isucon/isucon-setup-logs/<スクリプト名>-<時刻>.log`(書けない場合は `$HOME/isucon-setup-logs/`。ubuntu で 10 を実行した場合など)
+- 競技 repo の `.gitignore` 対象(20 が書く)。90 の `GITHUB_TOKEN` はトレースを止めて扱うのでログに残らない
 
 ## フォールバック: デプロイキーを当日生成して登録する
 

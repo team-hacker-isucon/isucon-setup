@@ -1,5 +1,6 @@
 # 手元 PC の ~/.ssh/config に追記するテンプレ。当日は IP を3行書き換えるだけ。
-# (10-add-members-keys.sh 実行後は全員 isucon ユーザーで直接入れる)
+# (10-add-members-keys.sh 実行後は全員 isucon ユーザーで直接入れる。sshd の制限で isucon に
+#  入れない環境では User を入口ユーザー(ubuntu 等)に変えて入り、sudo -i -u isucon する)
 Host isu1
   HostName <当日発表のIP>
   User isucon
