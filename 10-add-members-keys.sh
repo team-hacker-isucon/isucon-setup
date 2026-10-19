@@ -12,7 +12,9 @@
 #   ./10-add-members-keys.sh
 #   ENTRY_USER=admin ./10-add-members-keys.sh   # 入口ユーザーを明示する場合
 set -euo pipefail
-source "$(dirname "${BASH_SOURCE[0]}")/lib/log.sh"
+# symlink 経由で実行されても lib を見つけられるよう実体のパスから辿る
+SCRIPT_DIR=$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")
+source "$SCRIPT_DIR/lib/log.sh"
 log_start "メンバーの GitHub 公開鍵を isucon と入口ユーザーの authorized_keys に追記する"
 
 MEMBERS=(
@@ -72,36 +74,39 @@ fi
 if [ -z "$ENTRY" ] && getent passwd ubuntu > /dev/null; then
   ENTRY=ubuntu
 fi
-if [ -z "$ENTRY" ]; then
+# ENTRY_USER で明示されても isucon / root は対象外(root への鍵追加は意図しない権限拡大になる)
+if [ "$ENTRY" = isucon ] || [ "$ENTRY" = root ]; then
+  echo "入口ユーザー = $ENTRY は対象外のためスキップ"
+  ENTRY=""
+elif [ -z "$ENTRY" ]; then
   echo "WARN: 入口ユーザーが特定できないためスキップ(必要なら ENTRY_USER=<名前> を付けて再実行)"
-elif [ "$ENTRY" = isucon ]; then
-  echo "入口ユーザー = isucon のためスキップ"
 elif ! getent passwd "$ENTRY" > /dev/null; then
   echo "WARN: 入口ユーザー $ENTRY が存在しないためスキップ"
+  ENTRY=""
 elif ! add_keys_to_user "$ENTRY"; then
   echo "WARN: 入口ユーザー $ENTRY への追記に失敗(isucon 側は追記済み)"
 fi
 
 echo "== [4/4] sshd の接続制限を確認 =="
-# sshd -T は実効設定を出す。-C で isucon 接続時の Match ブロックも評価させる
+# sshd -T は実効設定を出す。-C でそのユーザーが接続した時の Match ブロックも評価させる
 # (古い OpenSSH は -C に user/host/addr すべてが要る。失敗したら -C なしで再試行)
 check_sshd() {
   # パターン(* 等)がカレントのファイル名に展開されないよう、この関数内だけ glob を止める
   local -
   set -f
   local conf u pat g groups hit warned=0
-  conf=$(sudo sshd -T -C user=isucon,host=localhost,addr=127.0.0.1 2>/dev/null) \
-    || conf=$(sudo sshd -T 2>/dev/null) \
-    || { echo "WARN: sudo sshd -T に失敗(sshd_config の AllowUsers 等は手で確認する)"; return 0; }
-  grep -E '^(allowusers|allowgroups|denyusers|denygroups|pubkeyauthentication|authorizedkeysfile) ' <<<"$conf" || true
   local allowusers allowgroups denyusers denygroups
-  allowusers=$(awk '$1=="allowusers"{$1=""; print}' <<<"$conf" | xargs)
-  allowgroups=$(awk '$1=="allowgroups"{$1=""; print}' <<<"$conf" | xargs)
-  denyusers=$(awk '$1=="denyusers"{$1=""; print}' <<<"$conf" | xargs)
-  denygroups=$(awk '$1=="denygroups"{$1=""; print}' <<<"$conf" | xargs)
 
   for u in isucon ${ENTRY:+"$ENTRY"}; do
-    [ "$u" = isucon ] || getent passwd "$u" > /dev/null || continue
+    echo "-- $u --"
+    conf=$(sudo sshd -T -C "user=$u,host=localhost,addr=127.0.0.1" 2>/dev/null) \
+      || conf=$(sudo sshd -T 2>/dev/null) \
+      || { echo "WARN: sudo sshd -T に失敗(sshd_config の AllowUsers 等は手で確認する)"; return 0; }
+    grep -E '^(allowusers|allowgroups|denyusers|denygroups|pubkeyauthentication|authorizedkeysfile) ' <<<"$conf" || true
+    allowusers=$(awk '$1=="allowusers"{$1=""; print}' <<<"$conf" | xargs)
+    allowgroups=$(awk '$1=="allowgroups"{$1=""; print}' <<<"$conf" | xargs)
+    denyusers=$(awk '$1=="denyusers"{$1=""; print}' <<<"$conf" | xargs)
+    denygroups=$(awk '$1=="denygroups"{$1=""; print}' <<<"$conf" | xargs)
     groups=$(id -Gn "$u" 2>/dev/null || true)
     # パターンは user@host 形式もあり得るので @ より前だけ見る(ワイルドカードは case で一致判定)
     if [ -n "$allowusers" ]; then
@@ -122,12 +127,12 @@ check_sshd() {
         case "$g" in $pat) echo "WARN: DenyGroups ($denygroups) に $u の所属グループ $g が一致 → $u への直接 ssh は拒否される"; warned=1 ;; esac
       done
     done
+    if grep -qx 'pubkeyauthentication no' <<<"$conf"; then
+      echo "WARN: PubkeyAuthentication no → $u は鍵認証自体が無効"; warned=1
+    fi
   done
-  if grep -qx 'pubkeyauthentication no' <<<"$conf"; then
-    echo "WARN: PubkeyAuthentication no → 鍵認証自体が無効"; warned=1
-  fi
   if [ "$warned" = 0 ]; then
-    echo "sshd の接続制限: 問題なし(isucon への直接 ssh を拒否する設定は見当たらない)"
+    echo "sshd の接続制限: 問題なし(isucon / 入口ユーザーへの直接 ssh を拒否する設定は見当たらない)"
   else
     echo "→ 拒否されるユーザーには直接入れない。入れる方のユーザーで入り、必要なら sudo -i -u isucon する"
   fi

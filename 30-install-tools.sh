@@ -3,7 +3,9 @@
 # 先頭で「触る前のフルバックアップ」を取る(初期データを壊しても戻せる保険。
 # mysqld を止めずに固めるので厳密ではないが、開始直後の無負荷なら実用上戻せる)。
 set -euo pipefail
-source "$(dirname "${BASH_SOURCE[0]}")/lib/log.sh"
+# symlink 経由で実行されても lib を見つけられるよう実体のパスから辿る
+SCRIPT_DIR=$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")
+source "$SCRIPT_DIR/lib/log.sh"
 log_start "触る前のバックアップ + ツール導入 + ログ権限 + git/エディタ/tmux 設定"
 
 TIMESTAMP=$(date +%Y%m%d-%H%M%S)
@@ -28,7 +30,11 @@ echo "== [2/4] ツールインストール =="
 # NEEDRESTART_MODE=a: needrestart の「どのサービスを再起動するか」対話を自動化
 # (対象はシステム系サービスのみで nginx / mysql / アプリには影響しない)
 sudo DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get update
-sudo DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get install -y percona-toolkit graphviz unzip vim dstat htop tmux
+# Dpkg::Options: 設定ファイル(conffile)の差し替え確認は DEBIAN_FRONTEND では抑止できず、
+# tee 経由だとプロンプトが見えないまま止まり得る。既存の設定を残す側に自動回答させる
+sudo DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get install -y \
+  -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold \
+  percona-toolkit graphviz unzip vim dstat htop tmux
 # CPU アーキテクチャ自動判定(amd64 / arm64。multipass on Apple Silicon は arm64)。
 # 合わないバイナリを入れると「Syntax error: word unexpected」という不可解なエラーになる
 ARCH=$(dpkg --print-architecture)
