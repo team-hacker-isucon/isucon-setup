@@ -13,14 +13,17 @@
 #   KEEP_LANG=go     残す言語実装(webapp/<lang>)。カンマ区切りで複数可。既定 go
 #   NO_PRUNE_LANG=1  Go 以外の言語実装の削除をしない
 set -euo pipefail
-source "$(dirname "${BASH_SOURCE[0]}")/lib/log.sh"
-source "$(dirname "${BASH_SOURCE[0]}")/lib/prune-lang.sh"
+# symlink 経由で実行されても lib を見つけられるよう実体のパスから辿る
+SCRIPT_DIR=$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")
+source "$SCRIPT_DIR/lib/log.sh"
+source "$SCRIPT_DIR/lib/prune-lang.sh"
 log_start "/home/isucon を git 化し、競技 repo と合流して push する(1台目のみ)"
 
 REPO=${1:-team-hacker-isucon/isucon-env}
 PROTO=${2:-ssh}
 ISUCON_HOME=/home/isucon
 KEEP_LANG=${KEEP_LANG:-go}
+KEEP_LANG=${KEEP_LANG//[[:space:]]/}   # "go, php" のような空白入りの指定も受け付ける
 TIMESTAMP=$(date +%Y%m%d-%H%M%S)
 ARCHIVE_DIR=${ISUCON_HOME}_archive_${TIMESTAMP}
 
@@ -35,7 +38,9 @@ if [ "$(id -un)" != isucon ]; then
   exit 1
 fi
 if [ -e "$ISUCON_HOME/.git" ]; then
-  echo "ERROR: $ISUCON_HOME は git 化済み。二重実行はしない。2台目以降なら README の合流手順を使う"
+  echo "ERROR: $ISUCON_HOME は git 化済み。二重実行はしない"
+  echo "       - 1台目で途中失敗した場合: README の「20 が途中で失敗したときの復旧」を参照(.git は消さない)"
+  echo "       - 2台目以降の場合: README の合流手順を使う"
   exit 1
 fi
 if [ ! -d "$ISUCON_HOME/webapp" ]; then
@@ -72,21 +77,41 @@ if [ "${SKIP_ARCHIVE:-}" = 1 ]; then
   echo "SKIP_ARCHIVE=1 のためアーカイブを省略"
   ARCHIVE_DIR="(省略)"
 else
-  sudo du -sh "$ISUCON_HOME" || true
   df -h /home
   NEED_KB=$(sudo du -sk "$ISUCON_HOME" 2>/dev/null | awk '{print $1}' || true)
-  AVAIL_KB=$(df -Pk /home | awk 'NR==2 {print $4}')
-  # 途中でディスクが埋まると競技そのものが壊れるので、余裕(+1GB)が無ければ止める
-  if [ -n "$NEED_KB" ] && [ -n "$AVAIL_KB" ] && [ $((NEED_KB + 1024 * 1024)) -gt "$AVAIL_KB" ]; then
-    echo "ERROR: 空き容量不足の恐れ(必要 ${NEED_KB}KB + 余裕 1GB > 空き ${AVAIL_KB}KB)。何も変更していない"
+  AVAIL_KB=$(df -Pk /home | awk 'NR==2 {print $4}' || true)
+  if [ -z "$NEED_KB" ] || [ -z "$AVAIL_KB" ]; then
+    echo "ERROR: $ISUCON_HOME のサイズか /home の空き容量を取得できない(容量チェックができないので止める)。何も変更していない"
     echo "       手元バックアップ(00-local-backup.sh)を取ったうえで SKIP_ARCHIVE=1 ./20-init-repo.sh で続行できる"
     exit 1
   fi
-  sudo cp -a "$ISUCON_HOME" "$ARCHIVE_DIR"
+  echo "サイズ: $((NEED_KB / 1024)) MB / /home の空き: $((AVAIL_KB / 1024)) MB"
+  # アーカイブは競技中ずっと残り、mysql やログと同じ fs のことが多い。
+  # 途中や競技中にディスクが埋まると競技そのものが壊れるので、余裕(+5GB)が無ければ止める
+  if [ $((NEED_KB + 5 * 1024 * 1024)) -gt "$AVAIL_KB" ]; then
+    echo "ERROR: 空き容量不足の恐れ(必要 $((NEED_KB / 1024))MB + 余裕 5GB > 空き $((AVAIL_KB / 1024))MB)。何も変更していない"
+    echo "       手元バックアップ(00-local-backup.sh)を取ったうえで SKIP_ARCHIVE=1 ./20-init-repo.sh で続行できる"
+    exit 1
+  fi
+  # 失敗・Ctrl-C で中途半端なアーカイブが残ると「取れている」と誤解し、容量も食うので消す
+  _abort_archive() {
+    echo "中断: 作りかけのアーカイブ $ARCHIVE_DIR を削除する"
+    sudo rm -rf -- "$ARCHIVE_DIR"
+    exit 130
+  }
+  trap _abort_archive INT TERM
+  if ! sudo cp -a "$ISUCON_HOME" "$ARCHIVE_DIR"; then
+    echo "ERROR: アーカイブのコピーに失敗。作りかけの $ARCHIVE_DIR を削除して止める(git 化はまだしていない)"
+    sudo rm -rf -- "$ARCHIVE_DIR"
+    exit 1
+  fi
+  trap - INT TERM
   sudo du -sh "$ARCHIVE_DIR" || true
 fi
 
 echo "== [3/6] git init + initial commit(サーバー初期状態のまま。全言語を含む)=="
+LOG_ERR_HINT="まだ何も push していない。原因を直してから
+rm -rf $ISUCON_HOME/.git $ISUCON_HOME/.gitignore して再実行してよい"
 git init -b main
 # fresh なサーバーは git の identity 未設定で commit に失敗するため先に設定しておく
 git config --global user.email isucon@example.com
@@ -106,6 +131,14 @@ node_modules/
 /.config/
 /.bash_history
 /go/
+# 平文の認証情報(credential.helper store の PAT・mysql のパスワード)
+/.git-credentials
+/.my.cnf
+# 言語ツールチェーン・パッケージのキャッシュ(巨大で、サーバーごとに入れ直せる)
+/.cargo/
+/.rustup/
+/.npm/
+/.local/
 # setup リポジトリの clone とその実行ログ(競技 repo には入れない)
 /isucon-setup/
 /isucon-setup-logs/
@@ -132,6 +165,19 @@ analysis/
 pprof/
 EOF
 
+# GitHub は 100MB 超のファイルを拒否する。最後の push だけが失敗すると再実行もできなくなるので、
+# 何も commit していない今のうちに検査する(50MB 超は警告対象にもなるので止める)
+BIG_FILES=$(git ls-files -o --exclude-standard -z | xargs -0 -r du -k -- | awk '$1 > 50 * 1024' || true)
+if [ -n "$BIG_FILES" ]; then
+  echo "ERROR: 50MB を超えるファイルが commit 対象に入っている(サイズは KB)"
+  echo "$BIG_FILES"
+  # まだ commit していないので、作ったばかりの .git と .gitignore を消せば実行前の状態に戻る
+  rm -rf .git .gitignore
+  echo "       .git / .gitignore を消して実行前の状態に戻した(元のファイルはアーカイブにある)"
+  echo "       上のファイルを 20-init-repo.sh の .gitignore に追加する・移動するなど手で対処してから再実行する"
+  exit 1
+fi
+
 git add -A
 git commit -m "initial server state"
 INITIAL_COMMIT=$(git rev-parse --short HEAD)
@@ -139,6 +185,16 @@ INITIAL_COMMIT=$(git rev-parse --short HEAD)
 # --- 使わない言語実装を消す(別 commit。initial commit には全言語が残る)---
 # 戻すときは: git checkout <initial commit> -- webapp/<lang>
 echo "== [4/6] 使わない言語実装を削除(残す: $KEEP_LANG)=="
+# ここから先の失敗では .git を消して再実行しない(git rm 済みの言語は initial commit にしか残っていない)
+REMOTE_URL="git@github.com:${REPO}.git"
+if [ "$PROTO" = "https" ]; then REMOTE_URL="https://github.com/${REPO}.git"; fi
+LOG_ERR_HINT=".git は消さない(消すと削除済みの言語実装が initial commit ごと失われる)。原因を直してから:
+cd $ISUCON_HOME
+git status                    # 言語削除が未 commit なら: git commit -m 'remove non-${KEEP_LANG} implementations'
+git remote -v                 # origin が無ければ: git remote add origin $REMOTE_URL
+git fetch origin
+git merge origin/main --allow-unrelated-histories -X theirs -m 'merge isucon-env'   # merge 済みなら不要
+git push -u origin main"
 PRUNED=()
 if [ "${NO_PRUNE_LANG:-}" = 1 ]; then
   echo "NO_PRUNE_LANG=1 のため削除しない"
@@ -165,11 +221,7 @@ else
 fi
 
 echo "== [5/6] 競技 repo(${REPO})と合流 =="
-if [ "$PROTO" = "https" ]; then
-  git remote add origin "https://github.com/${REPO}.git"
-else
-  git remote add origin "git@github.com:${REPO}.git"
-fi
+git remote add origin "$REMOTE_URL"
 git fetch origin
 # タレ(Makefile / templates)を取り込む。README.md など同名ファイルが
 # 競技ホームに既にあると衝突して止まり得るため、衝突時はテンプレ側(theirs)を優先する
@@ -181,6 +233,9 @@ git push -u origin main
 { set +x; } 2>/dev/null
 echo "== サマリ =="
 echo "  アーカイブ:      $ARCHIVE_DIR"
+if [ "${SKIP_ARCHIVE:-}" != 1 ]; then
+  echo "                   (不要になったら: sudo rm -rf $ARCHIVE_DIR)"
+fi
 echo "  initial commit:  $INITIAL_COMMIT(全言語入りの初期状態)"
 if [ "${#PRUNED[@]}" -gt 0 ]; then
   echo "  削除した言語:    ${PRUNED[*]}(戻す: git checkout $INITIAL_COMMIT -- webapp/<lang>)"
