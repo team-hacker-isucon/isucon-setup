@@ -59,9 +59,10 @@ class LocalBackupTests(unittest.TestCase):
                     self.home.rename(selected)
                     self.home = selected
                     self.env["REMOTE_HOME"] = self.env["FIXTURE_HOME"] = str(selected)
-                result = self.run_backup()
+                output = self.base / f"output-{name}"
+                result = self.run_backup(OUT_DIR=str(output))
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-                archive = next((self.base / "output").glob("*-home-isucon.tar.gz"))
+                archive = next(output.glob("*-home-isucon.tar.gz"))
                 self.assertEqual(stat.S_IMODE(archive.stat().st_mode), 0o600)
                 with tarfile.open(archive) as handle:
                     self.assertIn(f"{name}/original.txt", handle.getnames())
