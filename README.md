@@ -66,11 +66,17 @@ cd ~/isucon-setup
 scp ./deploy_key isu1:.ssh/id_ed25519    # isu2 / isu3 にも同じ鍵を配る
 ssh isu1 'chmod 600 ~/.ssh/id_ed25519'
 
-# 3. /home/isucon を git 化して競技 repo(team-hacker-isucon/isucon-env)と合流(1台目のみ)
-#    git 化の前に /home/isucon を /home/isucon_archive_<時刻> へ丸ごとコピーし、
-#    initial commit(全言語入り)の後に Go 以外の実装を別 commit で消してから合流する(詳細は下)
-./20-init-repo.sh
+# 3. Git 初期化は isucon-env 側で実行する(1台目のみ)
+#    env PR #1 / #2 が main に反映済みなら main を使う。
+#    未マージの間は下の値を fix/vm-home-ignore に変更する。
+ENV_BRANCH=main
+git clone --branch "$ENV_BRANCH" git@github.com:team-hacker-isucon/isucon-env.git ~/isucon-env
+bash ~/isucon-env/scripts/init-repo.sh --home /home/isucon
+#    webapp/go 以外にアプリがある場合は --app-dir <ホームからの相対パス> を指定する。
+#    ツールの別 Git clone がある場合は --ignore xbuild/ などで除外する。
+#    設定・除外・バックアップ結果を確認してから、必要な時に自分で push する。
 
+cd ~/isucon-setup
 # 4. ツール導入 + git/エディタ設定(先頭で触る前のバックアップも取る)
 ./30-install-tools.sh
 
@@ -78,54 +84,25 @@ ssh isu1 'chmod 600 ~/.ssh/id_ed25519'
 #    make set-as-s1 → make get-conf → …(isucon-env の README 参照)
 ```
 
-### 20-init-repo.sh の安全装置と環境変数
+### Git 初期化を isucon-env に移管
 
-- 実行前チェック: 次のどれかに当たると、理由を表示して**何も変更せずに** exit 1 する
-  - `/home/isucon` が無い / isucon ユーザーで実行していない
-  - `/home/isucon/.git` が既にある(二重実行防止。2台目以降は下の合流手順)
-  - `/home/isucon/webapp` が無い(想定と違う構成。`ls -la /home/isucon` を表示して止まる)
-- 自動アーカイブ: `.gitignore` 作成や `merge -X theirs`(README.md / Makefile 等の上書き)より前に `sudo cp -a /home/isucon /home/isucon_archive_<時刻>` を取る。空きが「サイズ + 5GB」未満、またはサイズが取れなければ止まる。コピー失敗・Ctrl-C 時は作りかけを消す。不要になったら `sudo rm -rf /home/isucon_archive_<時刻>` で消す
-- 大きいファイルの検査: initial commit の前に 50MB 超のファイルが commit 対象にあれば、一覧を出して止まる(GitHub の 100MB 制限で最後の push だけが失敗する事故を防ぐ)
-- 言語実装の削除: initial commit の次の commit で `webapp/` 配下の既知の言語ディレクトリ(nodejs, php, python, ruby, rust など)を `git rm -r` する。`js` / `ts` は静的ファイル置き場と区別できないので対象外。`frontend` / `sql` / `public` など言語名でないものは消さない。戻すときは `git checkout <initial commit> -- webapp/<lang>`(サマリに hash が出る)
+`20-init-repo.sh` は移行先を表示して exit 2 で終了する。ホームの初期化・言語削除・通信・push は行わず、旧引数や `FORCE` / `KEEP_LANG` 等も引き継がない。初期化の入口を `isucon-env/scripts/init-repo.sh` に統一し、古い Git の `git init -b`、`webapp` 固定、容量不足や大容量ファイルによる中断が残る旧実装は実行しない。
 
-| 環境変数 | 既定 | 意味 |
-| --- | --- | --- |
-| `FORCE=1` | なし | `webapp/` が無くても続行する |
-| `SKIP_ARCHIVE=1` | なし | 自動アーカイブを省略する(容量不足で止まったとき。00 の手元バックアップがある前提) |
-| `KEEP_LANG` | `go` | 残す言語。カンマ区切りで複数可(例: `KEEP_LANG=go,rust`) |
-| `NO_PRUNE_LANG=1` | なし | 言語実装の削除をしない |
+新しい手順には [isucon-env PR #1](https://github.com/team-hacker-isucon/isucon-env/pull/1) のホーム初期化と、[isucon-env PR #2](https://github.com/team-hacker-isucon/isucon-env/pull/2) (`fix/vm-home-ignore`) の VM ログ対策が必要。未マージの間は、対応するブランチを明示して clone する。詳細な引数・除外対象・途中停止時の復旧は [isucon-env README](https://github.com/team-hacker-isucon/isucon-env#readme) を参照する。
 
-### 20 が途中で失敗したときの復旧
+すでに旧 20 を実行して途中停止したホームでは `.git` を消さない。`git status`、`git log --oneline -5`、`git remote -v` を確認する。push の切断だけではローカルのコミットは失われないため、新スクリプトで二重に初期化せず、履歴と接続先を確認してから続きを実行する。キャッシュが古い履歴に入っている場合は、新しい ignore だけでは過去の Git object を減らせない。履歴の共有・push の反映状況を確認してから整理する。
 
-- **git 化より前**(実行前チェック・SSH 確認・アーカイブ・50MB 超ファイルの検査)で止まった場合は何も変わっていないので、原因を直して再実行すればよい。50MB 超のファイルがあると `.git` / `.gitignore` を消して止まるので、`.gitignore` に追加するなど手で対処してから再実行する
-- **initial commit より前**に失敗した場合は、`rm -rf /home/isucon/.git /home/isucon/.gitignore` してから再実行してよい
-- **言語削除・fetch・merge・push** で失敗した場合は `.git` を消さずに続きを手で実行する(失敗表示にも同じコマンドが出る):
+### ツール導入時のバックアップと APT ロック
 
-```sh
-cd /home/isucon
-git status                    # 言語削除が未 commit なら git commit -m 'remove non-go implementations'
-git remote -v                 # origin が無ければ git remote add origin git@github.com:team-hacker-isucon/isucon-env.git
-git fetch origin
-git merge origin/main --allow-unrelated-histories -X theirs -m 'merge isucon-env'   # merge 済みなら不要
-git push -u origin main
-```
+`30-install-tools.sh` は MySQL・nginx・systemd とホーム全体を `local/backup-<時刻>-*.tar.gz` へ保存する。`webapp` の存在を要求せず、ホームの `local/`・`.git/`・`isucon-setup-logs/` を除外する。ホームを変える場合は `ISUCON_HOME=/別のホーム ./30-install-tools.sh` と指定する。この指定はバックアップ元・保存先に適用し、エディタ設定等は実行ユーザーのホームを使う。
 
-⚠️ この段階で `rm -rf .git` して再実行しない。`git rm` で消した言語実装はディスクから消えていて initial commit にしか残っていないため、再実行すると initial commit に入らなくなる(戻すにはアーカイブ `/home/isucon_archive_<時刻>` からコピーするしかない)。
+各アーカイブは保存先の空き容量に 1 GiB の余裕がある場合に試行し、成功時にだけ `.tar.gz` の名前にする。失敗時の `.partial` は完全なバックアップではない。コピー元のサイズや空き容量が不明な場合・容量不足・保存先を作れない場合も、警告を出してツール導入を続ける。保存先を作成できた場合は `backup-<時刻>-report.txt` に各対象の `success` / `failed` / `skipped` を残す。稼働中の MySQL は整合した物理バックアップを保証しないため、復旧可能性が必要なら別途確認する。
+
+APT は更新・インストール時のロック占有エラーだけ最大 300 秒待って再試行する。古い APT でも動くよう、`DPkg::Lock::Timeout` に依存せず判定する。ロックファイルは削除せず、保持プロセスも停止しない。権限不足・リポジトリ障害・dpkg の中断等はそのまま失敗を返す。待機上限は `APT_LOCK_WAIT_SECONDS`、再試行の間隔は `APT_LOCK_RETRY_SECONDS` (既定 5 秒) で変更でき、上限を 0 にすると再試行しない。APT の出力は各試行の終了時に表示する。上限後もロックが残る場合は、別の更新処理が終わってから 30 を再実行する。
 
 ## 2台目以降の合流
 
-2台目以降(s2/s3)は 20-init-repo.sh ではなく、既存の /home/isucon に重ねる(初期状態は全台同一なので reset --hard で安全):
-
-```sh
-cd /home/isucon
-git init -b main
-git remote add origin git@github.com:team-hacker-isucon/isucon-env.git
-git fetch origin
-git reset --hard origin/main
-git branch -u origin/main main   # 初回 push で --set-upstream を聞かれないように
-git status --short               # 1台目で消した言語実装(webapp/nodejs 等)は未追跡として残る
-# rm -rf webapp/<lang>           # → 消しておく(git add -A で復活させないように)
-```
+1台目から push した履歴を配置する。初期状態が同じとは限らず `reset --hard` は既存ファイルを上書きするため、先に各台を `00-local-backup.sh` 等で保存する。詳細は上記 isucon-env README の「2台目以降の合流」を参照する。古い Git では `git init -b main` の代わりに `git init` と `git symbolic-ref HEAD refs/heads/main` を使う。
 
 ## 解析結果を手元に取ってくる(手元の AI エージェントに渡す)
 
@@ -142,12 +119,12 @@ git status --short               # 1台目で消した言語実装(webapp/nodejs
 
 ## ログ
 
-10 / 20 / 30 / 90 は実行した全コマンドを時刻付きで表示し、同じ内容をログファイルにも残す(失敗時は何行目の何のコマンドで止まったかとログの場所が出る)。
+10 / 30 / 90 は実行した全コマンドを時刻付きで表示し、同じ内容をログファイルにも残す(失敗時は何行目の何のコマンドで止まったかとログの場所が出る)。
 
 - 置き場所: `/home/isucon/isucon-setup-logs/<スクリプト名>-<時刻>.log`(書けない場合は `$HOME/isucon-setup-logs/`。ubuntu で 10 を実行した場合など)
-- 競技 repo の `.gitignore` 対象(20 が書く)。90 の `GITHUB_TOKEN` はトレースを止めて扱うのでログに残らない
+- 競技 repo の `.gitignore` 対象(env の初期化で設定する)。90 の `GITHUB_TOKEN` はトレースを止めて扱うのでログに残らない
 - 00 は手元で実行するため、毎行ログの対象外(結果のサマリだけ画面に出る)
-- 20 は git 化以降のフェーズで失敗すると、失敗表示の中に復旧コマンド(下記)を出す
+- 20 は移行案内のみを表示し、実行ログを作らない
 
 ## tmux の全ペイン録画
 
@@ -184,4 +161,15 @@ ssh -t isu1 scriptreplay -T local/tmux-rec/X.tm -O local/tmux-rec/X.out -m 1   #
 # isucon-env の Settings → Deploy keys に手で貼る(Allow write access にチェック)
 ```
 
-さらにもしもの時(SSH が全滅した等)は PAT の https 認証でも push できる: `git config --global credential.helper 'cache --timeout=28800'` して、初回 fetch のプロンプトで Username = GitHub ユーザー名 / Password = PAT(Contents: Read and write)。cache はメモリにだけ 8 時間保持し、ファイルには残らない(`store` は ~/.git-credentials に平文で書くので使わない。20 の .gitignore で除外はしているが、git add -A で push される事故を避ける)。競技後に PAT は必ず revoke する。
+さらにもしもの時(SSH が全滅した等)は PAT の https 認証でも push できる: `git config --global credential.helper 'cache --timeout=28800'` して、初回 fetch のプロンプトで Username = GitHub ユーザー名 / Password = PAT(Contents: Read and write)。cache はメモリにだけ 8 時間保持し、ファイルには残らない(`store` は ~/.git-credentials に平文で書くので使わない。env の .gitignore で除外はしているが、git add -A で push される事故を避ける)。競技後に PAT は必ず revoke する。
+
+## ローカル回帰テスト
+
+```sh
+python3 -m unittest discover -s tests -v
+for script in 20-init-repo.sh 30-install-tools.sh lib/install-tools.sh; do
+  bash -n "$script"
+done
+```
+
+APT・sudo・ダウンロード・設定変更を stub に置き換え、Ubuntu 18.04 のロック文言、有限待機、非ロック失敗、ホーム直下アプリのアーカイブ、容量不足と保存先作成失敗後の続行を確認する。実際の VM・APT の並行処理・MySQL 復旧はこのテストでは実行しない。
