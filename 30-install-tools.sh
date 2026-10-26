@@ -15,8 +15,8 @@ ISUCON_HOME=${ISUCON_HOME:-/home/isucon}
 ISUCON_HOME=$(cd "$ISUCON_HOME" && pwd -P)
 [[ "$ISUCON_HOME" != / ]] || { echo "ERROR: ISUCON_HOME must not be the filesystem root" >&2; exit 1; }
 BACKUP_DIR="$ISUCON_HOME/local"          # 競技 repo の .gitignore 対象(local/)
-NGINX_ACCESS_LOG=/var/log/nginx/access.log
-MYSQL_SLOW_LOG=/var/log/mysql/mysql-slow.log
+NGINX_ACCESS_LOG=${NGINX_ACCESS_LOG:-/var/log/nginx/access.log}
+MYSQL_SLOW_LOG=${MYSQL_SLOW_LOG:-/var/log/mysql/mysql-slow.log}
 
 # --- 触る前のフルバックアップ ---
 echo "== [1/4] バックアップ(tar は成功している間は無言。mysql データが大きいと数分かかる)=="
@@ -57,9 +57,9 @@ fi
 
 # --- ログを isucon ユーザーでも読めるように(alp / slp / pprotein-agent 用)---
 echo "== [3/4] ログ読み取り権限 =="
-sudo chmod +rx /var/log/nginx || true
+sudo chmod +rx "$(dirname "$NGINX_ACCESS_LOG")" || true
 sudo test -f "$NGINX_ACCESS_LOG" && sudo chmod +r "$NGINX_ACCESS_LOG" || true
-sudo chmod +rx /var/log/mysql || true
+sudo chmod +rx "$(dirname "$MYSQL_SLOW_LOG")" || true
 sudo test -f "$MYSQL_SLOW_LOG" && sudo chmod +r "$MYSQL_SLOW_LOG" || true
 
 # --- git・エディタを vim に固定(nano 事故防止)---
@@ -95,9 +95,10 @@ setw -g mode-keys vi
 bind | split-window -h
 bind - split-window -v
 # 全ペイン録画: 新しいウィンドウ/ペインは util-linux の script 経由で起動し、タイミング付きで記録する。
-# 保存先 ~/local/tmux-rec は競技 repo で gitignore 済み。録画の起動に失敗したら素の bash にする。
+# 保存先 ~/local/tmux-rec は競技 repo で gitignore 済み。旧 util-linux でも使える timing 形式で記録する。
+# 録画の起動に失敗したら素の bash にする。
 # 画面に出たものは全部残る(秘密を画面に出さない)。録画しないペインは prefix : new-window bash
-set -g default-command 'd=$HOME/local/tmux-rec; mkdir -p "$d"; f="$d/$(hostname -s)-$(date +%Y%m%d-%H%M%S)-p${TMUX_PANE#%}"; script -q -f -m advanced -T "$f.tm" -O "$f.out" -c "exec bash -l" || exec bash -l'
+set -g default-command 'd=$HOME/local/tmux-rec; mkdir -p "$d"; f="$d/$(hostname -s)-$(date +%Y%m%d-%H%M%S)-p${TMUX_PANE#%}"; script -q -f --timing="$f.tm" -c "exec bash -l" "$f.out" || exec bash -l'
 EOF
 
 { set +x; } 2>/dev/null

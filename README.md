@@ -110,11 +110,13 @@ bash /home/isucon/isucon-setup/setup-server.sh \
 ```sh
 # 0. 手元から: ssh_config の IP を埋める → 何かを触る前に初期状態を手元にバックアップ(全台まとめて)
 #    スクリプトと同じ場所の backup/ に <host>-<時刻>-home-isucon.tar.gz と -etc.tar.gz
-#    (/etc/nginx, /etc/mysql, /etc/systemd/system)ができる。権限 600(中身に認証情報を含み得る)。出力先は OUT_DIR で変更可
+#    (/etc/nginx, /etc/mysql, /etc/systemd/system)ができる。権限 600(中身に認証情報を含み得る)。
+#    出力先は OUT_DIR、ホームのコピー元は REMOTE_HOME で変更可(既定 /home/isucon)
 #    読めないファイルがあって tar が失敗しても、gzip として完結していれば部分バックアップとして残す(WARN 表示)
 #    isucon で入れない環境(入口が ubuntu だけ)なら、ssh_config の User を一時的に入口ユーザーにして実行するか、
 #    10 の後に実行する(sudo が非対話で使えれば /home/isucon も sudo tar で取る)
 ./00-local-backup.sh isu1 isu2 isu3
+# REMOTE_HOME=/srv/isucon ./00-local-backup.sh isu1  # 別ホームの例(ASCII英数字と _./:@+- の絶対パス)
 
 # 1. 最初の1人がサーバーに入る(入口が ubuntu 等なら sudo -i -u isucon で isucon に切り替え)
 #    このリポジトリを clone(public なので認証不要)して鍵を登録
@@ -154,7 +156,7 @@ cd ~/isucon-setup
 
 ### ツール導入時のバックアップと APT ロック
 
-`30-install-tools.sh` は MySQL・nginx・systemd とホーム全体を `local/backup-<時刻>-*.tar.gz` へ保存する。`webapp` の存在を要求せず、ホームの `local/`・`.git/`・`isucon-setup-logs/` を除外する。ホームを変える場合は `ISUCON_HOME=/別のホーム ./30-install-tools.sh` と指定する。この指定はバックアップ元・保存先に適用し、エディタ設定等は実行ユーザーのホームを使う。
+`30-install-tools.sh` は MySQL・nginx・systemd とホーム全体を `local/backup-<時刻>-*.tar.gz` へ保存する。`webapp` の存在を要求せず、ホームの `local/`・`.git/`・`isucon-setup-logs/` を除外する。ホームを変える場合は `ISUCON_HOME=/別のホーム ./30-install-tools.sh` と指定する。この指定はバックアップ元・保存先に適用し、エディタ設定等は実行ユーザーのホームを使う。ログの場所を変えた場合は `NGINX_ACCESS_LOG=/別のログ MYSQL_SLOW_LOG=/別のログ ./30-install-tools.sh` で、読み取り権限を付ける対象も指定できる。
 
 各アーカイブは保存先の空き容量に 1 GiB の余裕がある場合に試行し、出力ファイルを権限 600 で作成し、成功時にだけ `.tar.gz` の名前にする。失敗時の `.partial` は完全なバックアップではない。コピー元のサイズや空き容量が不明な場合・容量不足・保存先を作れない場合も、警告を出してツール導入を続ける。保存先を作成できた場合は `backup-<時刻>-report.txt` に各対象の `success` / `failed` / `skipped` を残す。稼働中の MySQL は整合した物理バックアップを保証しないため、復旧可能性が必要なら別途確認する。
 
@@ -188,7 +190,7 @@ APT は更新・インストール時のロック占有エラーだけ最大 300
 
 ## tmux の全ペイン録画
 
-30 が配る `~/.tmux.conf` で、**tmux の新しいウィンドウ/ペインはすべて自動で録画**される(util-linux の `script` を使うので追加インストール不要)。あとからタイミング付きで再生できる。
+30 が配る `~/.tmux.conf` で、**tmux の新しいウィンドウ/ペインはすべて自動で録画**される(util-linux の `script` を使うので追加インストール不要)。Ubuntu 18.04 の util-linux でも使える形式でタイミング付きの記録を取り、あとから再生できる。
 
 - 保存先: `~/local/tmux-rec/<ホスト名>-<開始時刻>-p<ペイン番号>.{tm,out}`(競技 repo で gitignore 済み)
 - 設定前から開いているペインは録画されない。30 の実行後は tmux を起動し直す
@@ -196,9 +198,9 @@ APT は更新・インストール時のロック占有エラーだけ最大 300
 
 ```sh
 ls -lt ~/local/tmux-rec/                                      # 一覧
-scriptreplay -T X.tm -O X.out -m 1 -d 4                       # 無操作の待ちを最大1秒に詰めて 4倍速で再生
+scriptreplay -t X.tm -s X.out -m 1 -d 4                       # 無操作の待ちを最大1秒に詰めて 4倍速で再生
 grep -a 'make bench' ~/local/tmux-rec/*.out                   # 中身を文字列検索
-ssh -t isu1 scriptreplay -T local/tmux-rec/X.tm -O local/tmux-rec/X.out -m 1   # 手元から再生
+ssh -t isu1 scriptreplay -t local/tmux-rec/X.tm -s local/tmux-rec/X.out -m 1   # 手元から再生
 ```
 
 注意:
