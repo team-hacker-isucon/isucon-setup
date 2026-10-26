@@ -1,0 +1,168 @@
+#!/usr/bin/env bash
+# Run on a team member's computer. No credentials are accepted as argument values.
+set -euo pipefail
+usage() {
+  cat <<'EOF'
+Usage: ./setup.sh --mode first|join|existing --server HOST:s1 [--server HOST:s2 ...] [options] [-- SERVER_OPTIONS...]
+  --deploy-key FILE         Registered deploy private key; content is sent over SSH stdin
+  --skip-deploy-key         Keep the server's existing Git authentication
+  --home PATH               Competition Git root (default: /home/isucon)
+  --entry-user USER         Extra public-key recipient for server script 10
+  --setup-repo URL          Setup clone URL (default: https://github.com/team-hacker-isucon/isucon-setup.git)
+  --setup-ref REF           Setup branch/tag to clone (default: main)
+  --setup-clone-dir PATH    Server setup clone (default: HOME/isucon-setup)
+  --backup-dir PATH         Local backup output directory (default: this clone/backup)
+  --skip-backup             Skip the local initial backup (server helpers still try theirs)
+  --plan                    Print actions without SSH, copies, or file changes
+SERVER_OPTIONS are passed as an argument array to setup-server.sh. Use e.g.
+  -- --env-ref FEATURE_BRANCH -- --app-dir isucari/webapp/go
+first accepts one server only. After reviewing and manually pushing its history,
+run join for the other servers. existing resumes keys/tools/config on an already
+initialized home. SSH user/IP/authentication come from ~/.ssh/config; --entry-user
+only selects script 10's extra authorized_keys account. Non-isucon SSH sessions
+need passwordless sudo to run the server steps as isucon.
+Deploy keys are installed in the isucon account's actual home. A different existing
+key is never overwritten. Repository URLs must not include tokens/passwords.
+This command never pushes, deploys config, or restarts competition services.
+EOF
+}
+fail() { echo "ERROR: $*" >&2; exit 1; }
+value() { [[ $# -ge 2 && -n "$2" ]] || fail "$1 requires a value"; }
+literal() { [[ -n "$2" && "$2" != *[!a-zA-Z0-9_./:@+-]* ]] || fail "$1 accepts ASCII letters/digits and _./:@+- only"; }
+repository() {
+  [[ -n "$2" && "$2" != -* && "$2" != *$'\n'* && "$2" != *$'\r'* ]] || fail "invalid $1"
+  case "$2" in http://*@*|https://*@*|*://*:*@*|*'?'*|*'#'*) fail "repository URLs must not contain credentials, queries, or fragments" ;; esac
+}
+SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)
+MODE= KEY_FILE= SKIP_KEY=0 HOME_DIR=/home/isucon ENTRY_USER=
+SETUP_REPO=https://github.com/team-hacker-isucon/isucon-setup.git SETUP_REF=main SETUP_CLONE_DIR=
+BACKUP_DIR=$SCRIPT_DIR/backup SKIP_BACKUP=0 PLAN=0 SERVERS=() IDS=() SERVER_OPTIONS=()
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --mode) value "$@"; MODE=$2; shift 2 ;;
+    --server)
+      value "$@"; item=$2; host=${item%:*}; sid=${item##*:}
+      [[ "$host" != "$item" && -n "$host" && "$host" != -* && "$host" != *[!a-zA-Z0-9_.@-]* ]] || fail "--server requires SSH_HOST:s1|s2|s3"
+      case "$sid" in s1|s2|s3) ;; *) fail "--server requires SSH_HOST:s1|s2|s3" ;; esac
+      for old in ${SERVERS[@]+"${SERVERS[@]}"}; do [[ "$old" != "$host" ]] || fail "duplicate server: $host"; done
+      for old in ${IDS[@]+"${IDS[@]}"}; do [[ "$old" != "$sid" ]] || fail "duplicate server ID: $sid"; done
+      SERVERS+=("$host"); IDS+=("$sid"); shift 2 ;;
+    --deploy-key) value "$@"; KEY_FILE=$2; shift 2 ;;
+    --skip-deploy-key) SKIP_KEY=1; shift ;;
+    --home) value "$@"; HOME_DIR=$2; shift 2 ;;
+    --entry-user) value "$@"; ENTRY_USER=$2; shift 2 ;;
+    --setup-repo) value "$@"; SETUP_REPO=$2; shift 2 ;;
+    --setup-ref) value "$@"; SETUP_REF=$2; shift 2 ;;
+    --setup-clone-dir) value "$@"; SETUP_CLONE_DIR=$2; shift 2 ;;
+    --backup-dir) value "$@"; BACKUP_DIR=$2; shift 2 ;;
+    --skip-backup) SKIP_BACKUP=1; shift ;;
+    --plan) PLAN=1; shift ;;
+    -h|--help) usage; exit 0 ;;
+    --) shift; SERVER_OPTIONS=("$@"); break ;;
+    *) fail "unknown option: $1" ;;
+  esac
+done
+case "$MODE" in first|join|existing) ;; *) fail "--mode first|join|existing is required" ;; esac
+[[ ${#SERVERS[@]} -gt 0 ]] || fail "at least one --server HOST:sN is required"
+[[ "$MODE" != first || ${#SERVERS[@]} -eq 1 ]] || fail "first accepts one server; push its reviewed history before join on the others"
+literal --home "$HOME_DIR"
+HOME_DIR=${HOME_DIR%/}
+[[ "$HOME_DIR" = /* && -n "$HOME_DIR" ]] || fail "--home must be absolute and must not be /"
+SETUP_CLONE_DIR=${SETUP_CLONE_DIR:-$HOME_DIR/isucon-setup}
+literal --setup-clone-dir "$SETUP_CLONE_DIR"
+[[ "$SETUP_CLONE_DIR" = /* && "$SETUP_CLONE_DIR" != / && "$SETUP_CLONE_DIR" != "$HOME_DIR" ]] || fail "invalid --setup-clone-dir"
+for path in "$HOME_DIR" "$SETUP_CLONE_DIR"; do
+  case "/${path#/}/" in */../*|*/./*) fail "paths must not contain . or .. components" ;; esac
+done
+literal --setup-ref "$SETUP_REF"; [[ "$SETUP_REF" != -* ]] || fail "invalid --setup-ref"
+repository --setup-repo "$SETUP_REPO"
+[[ -z "$ENTRY_USER" ]] || { literal --entry-user "$ENTRY_USER"; [[ "$ENTRY_USER" != -* && "$ENTRY_USER" != */* ]] || fail "invalid entry user"; }
+if [[ "$SKIP_KEY" = 0 ]]; then
+  [[ -n "$KEY_FILE" && -f "$KEY_FILE" && -r "$KEY_FILE" && -s "$KEY_FILE" ]] || fail "provide --deploy-key FILE or --skip-deploy-key"
+else
+  [[ -z "$KEY_FILE" ]] || fail "--deploy-key and --skip-deploy-key are mutually exclusive"
+fi
+# Keep local-owned settings out of forwarded arguments. After a second --, those
+# arguments belong to the env helper, whose wrapper performs its own validation.
+for arg in ${SERVER_OPTIONS[@]+"${SERVER_OPTIONS[@]}"}; do
+  [[ "$arg" != -- ]] || break
+  case "$arg" in --mode|--mode=*|--server-id|--server-id=*|--home|--home=*|--entry-user|--entry-user=*) fail "$arg must be supplied to setup.sh directly" ;; esac
+done
+show() { printf ' +'; printf ' %q' "$@"; printf '\n'; }
+SSH_OPTS=(-o BatchMode=yes -o ConnectTimeout=10 -o StrictHostKeyChecking=accept-new)
+# SSH joins command arguments as shell text. Single-quote for a POSIX login
+# shell, then quote the whole command again for bash -c under sudo.
+quote_arg() {
+  local escaped=${1//\'/\'\\\'\'}
+  printf "'%s'" "$escaped"
+}
+quote_command() {
+  local arg
+  for arg in "$@"; do quote_arg "$arg"; printf ' '; done
+}
+as_isucon() {
+  local quoted
+  quoted=$(quote_arg "$1")
+  printf 'if [ "$(id -un)" = isucon ]; then bash -c %s; else sudo -n -H -u isucon bash -c %s; fi' "$quoted" "$quoted"
+}
+if [[ "$SKIP_BACKUP" = 0 ]]; then
+  show env "REMOTE_HOME=$HOME_DIR" "OUT_DIR=$BACKUP_DIR" bash "$SCRIPT_DIR/00-local-backup.sh" ${SERVERS[@]+"${SERVERS[@]}"}
+  if [[ "$PLAN" = 0 ]]; then
+    env "REMOTE_HOME=$HOME_DIR" "OUT_DIR=$BACKUP_DIR" bash "$SCRIPT_DIR/00-local-backup.sh" ${SERVERS[@]+"${SERVERS[@]}"} || echo 'WARN: local backup failed or partial; continuing. Review backup output before relying on recovery.' >&2
+  fi
+fi
+KEY_INSTALL_SCRIPT=$(cat <<'EOF'
+set -euo pipefail
+umask 077
+[[ ! -L "$HOME/.ssh" ]] || { echo 'ERROR: .ssh is a symlink; inspect it before installing a key' >&2; exit 1; }
+install -d -m 700 "$HOME/.ssh"
+tmp=$(mktemp "$HOME/.ssh/.setup-deploy-key.XXXXXX")
+trap 'rm -f "$tmp"' EXIT
+cat > "$tmp"
+chmod 600 "$tmp"
+dest="$HOME/.ssh/id_ed25519"
+[[ ! -L "$dest" ]] || { echo 'ERROR: existing deploy key is a symlink' >&2; exit 1; }
+if [[ -e "$dest" ]]; then
+  cmp -s "$tmp" "$dest" || { echo 'ERROR: a different deploy key already exists; it was not overwritten' >&2; exit 1; }
+  chmod 600 "$dest"
+  echo 'deploy key already installed (same content)'
+else
+  # Same-filesystem hard link publishes the complete 600-mode key atomically.
+  # If another process created dest after the check, ln fails without replacing it.
+  ln "$tmp" "$dest"
+  echo 'deploy key installed'
+fi
+EOF
+)
+printf '== setup clone: repo=%s ref=%s dir=%s ==\n' "$SETUP_REPO" "$SETUP_REF" "$SETUP_CLONE_DIR"
+for ((i=0; i<${#SERVERS[@]}; i++)); do
+  host=${SERVERS[$i]}; sid=${IDS[$i]}
+  echo "== $host ($sid): $MODE =="
+  if [[ "$SKIP_KEY" = 0 ]]; then
+    echo " + install deploy key from file to isucon account over SSH stdin (existing different key: stop)"
+    [[ "$PLAN" = 1 ]] || ssh ${SSH_OPTS[@]+"${SSH_OPTS[@]}"} "$host" "$(as_isucon "$KEY_INSTALL_SCRIPT")" < "$KEY_FILE"
+  fi
+  args=(bash "$SETUP_CLONE_DIR/setup-server.sh" --mode "$MODE" --server-id "$sid" --home "$HOME_DIR")
+  [[ -z "$ENTRY_USER" ]] || args+=(--entry-user "$ENTRY_USER")
+  args+=(${SERVER_OPTIONS[@]+"${SERVER_OPTIONS[@]}"})
+  bootstrap=$(cat <<'EOF'
+set -euo pipefail
+export GIT_SSH_COMMAND=${GIT_SSH_COMMAND:-ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new -o ConnectTimeout=10}
+clone=$1; repo=$2; ref=$3; shift 3
+if [[ ! -e "$clone" ]]; then
+  git clone --branch "$ref" -- "$repo" "$clone"
+fi
+actual=$(cd "$clone" && pwd -P)
+[[ "$(git -C "$clone" rev-parse --show-toplevel)" = "$actual" ]] || { echo 'ERROR: setup clone-dir is not a separate checkout' >&2; exit 1; }
+[[ "$(git -C "$clone" config --get remote.origin.url)" = "$repo" ]] || { echo 'ERROR: setup origin differs from --setup-repo; select that URL explicitly' >&2; exit 1; }
+[[ -z "$(git -C "$clone" status --porcelain --untracked-files=no)" ]] || { echo 'ERROR: setup checkout has uncommitted changes' >&2; exit 1; }
+[[ "$(git -C "$clone" rev-parse HEAD)" = "$(git -C "$clone" rev-parse --verify "$ref^{commit}")" ]] || { echo 'ERROR: setup HEAD does not match --setup-ref; checkout the correct ref explicitly' >&2; exit 1; }
+[[ -f "$clone/setup-server.sh" ]] || { echo 'ERROR: setup ref does not contain setup-server.sh; publish/select the runner branch first' >&2; exit 1; }
+exec "$@"
+EOF
+)
+  command=$(quote_command bash -c "$bootstrap" setup-bootstrap "$SETUP_CLONE_DIR" "$SETUP_REPO" "$SETUP_REF" ${args[@]+"${args[@]}"})
+  show ssh ${SSH_OPTS[@]+"${SSH_OPTS[@]}"} "$host" ${args[@]+"${args[@]}"}
+  [[ "$PLAN" = 1 ]] || ssh ${SSH_OPTS[@]+"${SSH_OPTS[@]}"} "$host" "$(as_isucon "$command")"
+done
+echo '== Finished. Review each server before any manual commit/push or deployment. =='

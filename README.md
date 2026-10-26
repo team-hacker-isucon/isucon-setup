@@ -45,6 +45,66 @@ ssh-keygen -t ed25519 -N "" -f ./deploy_key -C "isucon-deploy"
 #    ※ 10-add-members-keys.sh の MEMBERS は記入済み(Lumonde-software / oshamashama / ryouta-uemura)
 ```
 
+## 初動をまとめて実行する
+
+手元の `setup.sh` が、初期バックアップ・デプロイキー配置・サーバーでの鍵登録・Git 化・ツール導入・現設定の取り込みを順番に実行する。SSH の Host/IP/User/入口鍵は事前に `~/.ssh/config` へ設定し、GitHub に登録済みのデプロイ秘密鍵を手元のファイルで指定する。入口が ubuntu 等でも、非対話 sudo が使えればサーバー側の処理を isucon ユーザーで実行できる。isucon へ直接 SSH する場合も、30 の APT や設定コピーに使う sudo がパスワードなしで動くことを前提とする。秘密鍵・token・パスワードを引数の値へ直接書かない。
+
+以下は **setup と env の両方に、一括実行と init/join の変更が main へ反映された後**の例。未反映の場合は変更を含む公開済みブランチを `--setup-ref` / `--env-ref` に指定する。手元だけにある未公開ブランチはサーバーから clone できない。すでにサーバーにある clone は更新せず、指定した URL・ref と一致することを確認して再利用する。
+
+まず初台のみをセットアップする。下の `isucari/webapp/go` と `xbuild/` は ISUCON9 の配置例なので、競技ソースとツールの配置に合わせる。アプリの unit 名・成果物名が既定値と違う場合は、最後に `--app-service` / `--app-bin` も指定する。
+
+```sh
+# 計画表示。SSH・書き込み・コピーは行わない
+./setup.sh --mode first --server isu1:s1 --deploy-key ./deploy_key --plan \
+  -- --env-ref main -- --app-dir isucari/webapp/go --ignore xbuild/
+
+# 初台を実行
+./setup.sh --mode first --server isu1:s1 --deploy-key ./deploy_key \
+  -- --env-ref main -- --app-dir isucari/webapp/go --ignore xbuild/
+```
+
+初台では `/home/isucon` が新しい Git ルートになる。バックアップ結果・除外ファイル・`config.mk`・取り込んだ設定を確認し、必要な差分を自分で commit/push する。その push が済んでから、他台に共有履歴を配置する。
+
+```sh
+./setup.sh --mode join --server isu2:s2 --server isu3:s3 --deploy-key ./deploy_key
+```
+
+`join` は既存のホーム直下 `.git` がないサーバー向けの明示的な合流操作。ホームのバックアップを試み、初台が push したブランチを fetch してから管理対象を共有履歴へ合わせる。既存ファイルを置換する場合は、サーバー内バックアップの成功が必要。バックアップが失敗・省略されても衝突がなければ合流でき、衝突する場合は原本を残して停止する。入れ子の `.git` や未追跡ファイルを一括削除する操作は行わない。既存ファイルと共有履歴が衝突する場合の保存・停止条件は、使用する env の `scripts/join-repo.sh --help` と README を確認する。初台用の `--app-dir` / `--ignore` 等は join では受け付けず、共有履歴の設定を使う。
+
+ツール導入等で途中停止し、ホームの Git 化または合流が完了している場合は `existing` で鍵登録・ツール・設定取り込みを再実行できる。`.git` だけが作られた未完了状態では止まるため、env README の復旧手順で先に確認する。
+
+```sh
+./setup.sh --mode existing --server isu1:s1 --skip-deploy-key
+```
+
+| 引数 | 用途 |
+| --- | --- |
+| `--server HOST:sN` | SSH Host とサーバー ID。join/existing では繰り返し指定可。first は1台だけ |
+| `--home PATH` | 競技 Git ルートとバックアップ元。既定 `/home/isucon` |
+| `--entry-user USER` | 10 が公開鍵を追加する入口アカウント。SSH ログインユーザーは SSH config の User で指定 |
+| `--setup-ref REF` / `--setup-clone-dir PATH` | サーバーに置く setup の ref と clone 先。既定 `main` / `HOME/isucon-setup` |
+| `--backup-dir PATH` / `--skip-backup` | 手元の先行バックアップ先 / その省略。env と30のサーバー内バックアップは別に試行 |
+| `--deploy-key FILE` / `--skip-deploy-key` | デプロイ秘密鍵ファイルの配布 / 既存の認証を使う |
+| 最初の `--` の後 | `setup-server.sh` の引数。`--env-ref` / `--env-repo` / `--clone-dir` / `--branch` / `--remote` / `--skip-keys` / `--skip-tools` / `--skip-config` 等 |
+| 2個目の `--` の後 | env helper の引数。first は init の競技設定・反復 `--ignore`・バックアップ設定、join は `--archive-dir` / `--skip-archive` |
+
+共通の `--home` は最初の `--` より前、`--branch` / `--remote` は env 引数へ渡す区切りより前に指定する。`--clone-dir` は env の clone 先で、setup の clone 先とは別。パス・競技設定は ASCII 英数字と `_./:@+-` のみを使う。`--env-repo` / `--setup-repo` は認証情報を含まない SSH URL または HTTPS URL にし、既存 clone の origin と同じ値を指定する。既存 clone の ref が違う場合は勝手に切り替えず停止する。Git の SSH 接続は、このコマンドと子プロセスの範囲で `BatchMode=yes`・`StrictHostKeyChecking=accept-new`・接続待ち10秒を既定にする。初めての host key は登録し、変更された key は拒否する。呼び出し元が `GIT_SSH_COMMAND` を設定している場合はその指定を保つ。
+
+デプロイキーの配置先は isucon アカウントの実ホームの `.ssh/id_ed25519`。`--home` で競技 Git ルートを変えても認証鍵の場所は変えない。`.ssh` は700、鍵は600とし、同じ鍵があれば再利用し、異なる既存鍵やシンボリックリンクは上書きせず停止する。鍵の内容は SSH の標準入力で送り、コマンド引数やログへ表示しない。
+
+`get-conf` は現在の nginx/MySQL/アプリ unit/env.sh を private な競技リポジトリへコピーし、`set-as-sN` はホームの `env.sh` にサーバー ID を設定する。これらを省く場合は最初の `--` の後に `--skip-config` を指定する。一括実行は push、設定の deploy、競技サービスの restart、LTSV/slow log/pprof 等の計測設定を実行しない。計測やデプロイは、取り込んだ設定を確認して env README の手順で行う。2台目でホームやアプリ配置が初台と異なる場合は、共有した `config.mk` を確認してから設定取り込みへ進める。
+
+サーバーへ自分でログインして開始する場合は `setup-server.sh` だけでも同じ処理をまとめられる。この入口は手元バックアップや秘密鍵配布を行わない。
+
+```sh
+sudo -iu isucon
+bash /home/isucon/isucon-setup/setup-server.sh \
+  --mode first --server-id s1 --home /home/isucon \
+  -- --app-dir isucari/webapp/go --ignore xbuild/
+```
+
+個々の処理だけ実行したい場合は、下の手順と既存の 00/10/30 を引き続き利用できる。
+
 ## 当日の初動(サーバーごと)
 
 ```sh
@@ -167,9 +227,18 @@ ssh -t isu1 scriptreplay -T local/tmux-rec/X.tm -O local/tmux-rec/X.out -m 1   #
 
 ```sh
 python3 -m unittest discover -s tests -v
-for script in 20-init-repo.sh 30-install-tools.sh lib/install-tools.sh; do
+for script in setup.sh setup-server.sh 20-init-repo.sh 30-install-tools.sh lib/install-tools.sh; do
   bash -n "$script"
 done
 ```
 
 APT・sudo・ダウンロード・設定変更を stub に置き換え、Ubuntu 18.04 のロック文言、有限待機、非ロック失敗、ホーム直下アプリのアーカイブ、容量不足と保存先作成失敗後の続行を確認する。実際の VM・APT の並行処理・MySQL 復旧はこのテストでは実行しない。
+
+一括入口の回帰は SSH・ユーザー判定を stub にし、ローカル Git で鍵の既存保護、引数の境界、変更なし plan、バックアップ失敗後の続行を確認する。env との結合確認は、init/join を含むコミット済み clone を明示する。
+
+```sh
+ISUCON_ENV_TEST_SOURCE=/path/to/isucon-env \
+  python3 -m unittest discover -s tests -p test_setup_runner.py -v
+```
+
+この結合確認も一時ディレクトリとローカルの bare Git のみを使い、実 SSH・APT・systemd は実行しない。
