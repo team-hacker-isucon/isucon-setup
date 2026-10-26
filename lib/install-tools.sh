@@ -73,6 +73,13 @@ backup_component() {
     record_backup "$name" skipped destination-exists
     return 0
   fi
+  # A full-home archive can contain private keys. Reserve a private regular file
+  # before sudo writes it; do not depend on sudoers' umask or follow an existing link.
+  if ! (umask 077; set -C; : > "$partial"); then
+    echo "WARN: backup failed ($name): could not reserve a private archive" >&2
+    record_backup "$name" failed destination-unavailable
+    return 0
+  fi
   echo "  - $name ..."
   if sudo tar -czf "$partial" "$@" -C "$base" "$member" && mv -- "$partial" "$archive"; then
     record_backup "$name" success "$archive"

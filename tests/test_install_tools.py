@@ -3,6 +3,7 @@ import os
 from pathlib import Path
 import shlex
 import shutil
+import stat
 import subprocess
 import tarfile
 import tempfile
@@ -108,7 +109,9 @@ class InstallToolsTests(unittest.TestCase):
             (self.home / directory / "excluded").write_text("must not archive")
         result = self.backups()
         self.assertEqual(result.returncode, 0, result.stderr)
-        with tarfile.open(self.home / "local/backup-fixture-home-isucon.tar.gz") as archive:
+        archive_path = self.home / "local/backup-fixture-home-isucon.tar.gz"
+        self.assertEqual(stat.S_IMODE(archive_path.stat().st_mode), 0o600)
+        with tarfile.open(archive_path) as archive:
             members = archive.getnames()
         self.assertIn("./isucari/main.go", members)
         self.assertFalse(any(name.startswith(("./local", "./.git", "./isucon-setup-logs")) for name in members))
@@ -118,6 +121,7 @@ class InstallToolsTests(unittest.TestCase):
         result = self.backups(TAR_FAIL=1)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertTrue((self.home / "local/backup-fixture-home-isucon.tar.gz.partial").exists())
+        self.assertEqual(stat.S_IMODE((self.home / "local/backup-fixture-home-isucon.tar.gz.partial").stat().st_mode), 0o600)
         self.assertFalse((self.home / "local/backup-fixture-home-isucon.tar.gz").exists())
         self.assertIn("home-isucon\tfailed", (self.home / "local/backup-fixture-report.txt").read_text())
 
@@ -135,6 +139,26 @@ class InstallToolsTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertFalse(target.exists())
         self.assertIn("destination-exists", (self.home / "local/backup-fixture-report.txt").read_text())
+
+    def test_existing_archive_and_partial_are_not_overwritten(self):
+        (self.home / "local").mkdir()
+        for suffix, symlink in ((".tar.gz", False), (".tar.gz.partial", False), (".tar.gz.partial", True)):
+            with self.subTest(suffix=suffix, symlink=symlink):
+                path = self.home / ("local/backup-fixture-home-isucon" + suffix)
+                target = self.base / "untouched"
+                if symlink:
+                    path.symlink_to(target)
+                else:
+                    path.write_bytes(b"original backup")
+                result = self.backups()
+                self.assertEqual(result.returncode, 0, result.stderr)
+                if symlink:
+                    self.assertTrue(path.is_symlink())
+                    self.assertFalse(target.exists())
+                else:
+                    self.assertEqual(path.read_bytes(), b"original backup")
+                self.assertIn("destination-exists", (self.home / "local/backup-fixture-report.txt").read_text())
+                path.unlink()
 
     def test_full_script_continues_when_backup_directory_cannot_be_created(self):
         self.stub("mkdir", '[[ "${@: -1}" != "$ISUCON_HOME/local" ]] || exit 1\nexec ' + shlex.quote(shutil.which("mkdir")) + ' "$@"\n')
