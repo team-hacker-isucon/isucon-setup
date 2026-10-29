@@ -26,7 +26,8 @@ class InstallToolsTests(unittest.TestCase):
         self.env = dict(os.environ, PATH=str(self.bin) + os.pathsep + os.environ["PATH"],
                         HOME=str(self.home), ISUCON_HOME=str(self.home),
                         CASE_DIR=str(self.base), APT_LOCK_WAIT_SECONDS="2", APT_LOCK_RETRY_SECONDS="1")
-        self.stub("sudo", 'while [[ "$1" = *=* ]]; do export "$1"; shift; done\n'
+        self.stub("sudo", 'printf "%s\\n" "$*" >> "$CASE_DIR/sudo-calls"\n'
+                  'while [[ "$1" = *=* ]]; do export "$1"; shift; done\n'
                   'case "$1" in apt-get|du|tar) exec "$@";; install|chmod|test|update-alternatives) exit 0;; '
                   '*) echo "unexpected sudo command: $*" >&2; exit 99;; esac\n')
         self.stub("apt-get", 'echo "$*" >> "$CASE_DIR/apt-calls"\n'
@@ -160,17 +161,55 @@ class InstallToolsTests(unittest.TestCase):
                 self.assertIn("destination-exists", (self.home / "local/backup-fixture-report.txt").read_text())
                 path.unlink()
 
-    def test_full_script_continues_when_backup_directory_cannot_be_created(self):
-        self.stub("mkdir", '[[ "${@: -1}" != "$ISUCON_HOME/local" ]] || exit 1\nexec ' + shlex.quote(shutil.which("mkdir")) + ' "$@"\n')
+    def full_script(self, **changes):
         for name, body in {"git": "exit 0\n", "dpkg": "echo amd64\n", "unzip": "exit 0\n",
                            "wget": '[[ "$*" != *slp* ]]\n'}.items():
             self.stub(name, body)
-        result = subprocess.run(["bash", str(ROOT / "30-install-tools.sh")], env=self.env,
-                                text=True, capture_output=True, timeout=15)
+        return subprocess.run(["bash", str(ROOT / "30-install-tools.sh")], env=dict(self.env, **changes),
+                              text=True, capture_output=True, timeout=15)
+
+    def test_full_script_continues_when_backup_directory_cannot_be_created(self):
+        self.stub("mkdir", '[[ "${@: -1}" != "$ISUCON_HOME/local" ]] || exit 1\nexec ' + shlex.quote(shutil.which("mkdir")) + ' "$@"\n')
+        result = self.full_script()
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn("backups skipped", result.stdout + result.stderr)
         self.assertIn("installed", result.stdout)
         self.assertIn("== done ==", result.stdout)
+
+    def test_custom_log_paths_reach_permission_setup(self):
+        nginx = str(self.home / "custom-nginx.log")
+        mysql = str(self.home / "custom-mysql.log")
+        result = self.full_script(NGINX_ACCESS_LOG=nginx, MYSQL_SLOW_LOG=mysql)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        calls = (self.base / "sudo-calls").read_text()
+        self.assertIn(f"chmod +rx {self.home}", calls)
+        self.assertNotIn("chmod +rx /var/log/nginx", calls)
+        self.assertIn(f"test -f {nginx}", calls)
+        self.assertIn(f"chmod +r {nginx}", calls)
+        self.assertIn(f"test -f {mysql}", calls)
+        self.assertIn(f"chmod +r {mysql}", calls)
+
+    def test_tmux_recording_works_with_old_script_options(self):
+        result = self.full_script()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        # util-linux 2.31.1 supports --timing, a positional output and -q/-f/-c.
+        # It rejects -m/-T/-O; a silent bash fallback must not pass this test.
+        self.stub("script", 'timing=; output=\n'
+                  'while [[ "$#" -gt 0 ]]; do case "$1" in\n'
+                  ' -q|-f) shift;; --timing=*) timing=${1#*=}; shift;;\n'
+                  ' -c) shift 2;; -*) echo "unsupported old script option: $1" >&2; exit 2;;\n'
+                  ' *) output=$1; shift;; esac; done\n'
+                  '[[ -n "$timing" && -n "$output" ]] || exit 2\n'
+                  'printf "0.001 8\\n" > "$timing"; printf "fixture\\n" > "$output"\n')
+        line = next(line for line in (self.home / ".tmux.conf").read_text().splitlines()
+                    if line.startswith("set -g default-command "))
+        command = shlex.split(line)[3]
+        result = subprocess.run(["/bin/bash", "-c", command], env=dict(self.env, TMUX_PANE="%1"),
+                                text=True, capture_output=True, timeout=5)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        directory = self.home / "local/tmux-rec"
+        self.assertEqual(len(list(directory.glob("*.tm"))), 1, result.stdout + result.stderr)
+        self.assertEqual(len(list(directory.glob("*.out"))), 1, result.stdout + result.stderr)
 
     def test_root_alias_is_rejected_and_retired_init_changes_nothing(self):
         result = subprocess.run(["bash", str(ROOT / "30-install-tools.sh")],
