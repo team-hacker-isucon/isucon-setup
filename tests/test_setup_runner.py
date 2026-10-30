@@ -2,6 +2,7 @@
 import json
 import os
 from pathlib import Path
+import shlex
 import shutil
 import subprocess
 import tempfile
@@ -98,6 +99,124 @@ PYTHON
                               '--setup-repo', 'https://token@example.com/repo', check=False)
         self.assertNotEqual(result.returncode, 0)
         self.assertNotIn('token@example', result.stdout + result.stderr)
+
+    def test_config_precedence_and_relative_key_path(self):
+        source = self.setup_source()
+        self.fake_ssh()
+        config_dir = self.base / 'config with spaces'
+        config_dir.mkdir()
+        key = config_dir / 'deploy key'
+        key.write_text('fixture-key\n')
+        config = config_dir / 'setup.conf'
+        config.write_text("DEPLOY_KEY_FILE='./deploy key'\nISUCON_HOME=/wrong-home\n"
+                          "ENV_REF=from-config\nAPP_DIR=from-config\nEXTRA_IGNORES=(old/)\n")
+        for config_first in (True, False):
+            with self.subTest(config_first=config_first):
+                args = self.local_args(source) + ['--env-ref', 'main', '--app-dir', 'src/go',
+                                                  '--ignore', 'tools/', '--ignore', 'cache/']
+                if config_first:
+                    args[2:2] = ['--config', str(config)]
+                else:
+                    args += ['--config', str(config)]
+                result = self.run_cmd(*args)
+                call = json.loads(self.calls.read_text().splitlines()[-1])
+                self.assertEqual(call[call.index('--home') + 1], str(self.competition))
+                self.assertEqual(call[call.index('--env-ref') + 1], 'main')
+                self.assertEqual(call[call.index('--app-dir') + 1], 'src/go')
+                self.assertEqual(call[-4:], ['--ignore', 'tools/', '--ignore', 'cache/'])
+                self.assertNotIn('old/', call)
+                self.assertNotIn('fixture-key', result.stdout + result.stderr)
+        self.assertEqual((self.home / '.ssh/id_ed25519').read_text(), 'fixture-key\n')
+
+    def test_shared_config_uses_first_settings_only_for_first_mode(self):
+        source = self.setup_source()
+        self.fake_ssh()
+        config = self.base / 'setup.conf'
+        config.write_text('APP_DIR=src/go\nAPP_SERVICE=app.service\nAPP_BIN=app\n'
+                          'EXTRA_IGNORES=(vendor/ tools/)\nSKIP_DEPLOY_KEY=1\n'
+                          'SKIP_KEYS=1\nSKIP_TOOLS=1\nSKIP_CONFIG=1\n'
+                          'ARCHIVE_DIR=/home/backup\nSKIP_ARCHIVE=1\n')
+        for mode in ('first', 'join', 'existing'):
+            with self.subTest(mode=mode):
+                args = self.local_args(source)
+                args[args.index('--mode') + 1] = mode
+                self.run_cmd(*args, '--config', str(config))
+                call = json.loads(self.calls.read_text().splitlines()[-1])
+                for switch in ('--skip-keys', '--skip-tools', '--skip-config'):
+                    self.assertIn(switch, call)
+                self.assertEqual('--app-dir' in call, mode == 'first')
+                self.assertEqual('--ignore' in call, mode == 'first')
+                self.assertEqual('--archive-dir' in call, mode != 'existing')
+                self.assertEqual('--skip-archive' in call, mode != 'existing')
+                if mode == 'first':
+                    self.assertEqual(call[call.index('--ignore'):call.index('--archive-dir')],
+                                     ['--ignore', 'vendor/', '--ignore', 'tools/'])
+
+    def test_flat_and_legacy_options_preserve_literal_arguments(self):
+        source = self.setup_source()
+        self.fake_ssh()
+        marker = self.base / 'INJECTED'
+        payload = "o'neil/$(touch " + str(marker) + ')/'
+        options = ['--env-ref', 'main', '--skip-tools']
+        helper = ['--app-dir', 'src/go', '--ignore', payload, '--skip-archive']
+        for tail in (options + helper, ['--'] + options + ['--'] + helper):
+            self.run_cmd(*self.local_args(source), '--skip-deploy-key', *tail)
+        calls = [json.loads(line) for line in self.calls.read_text().splitlines()]
+        self.assertEqual(calls[0], calls[1])
+        self.assertIn(payload, calls[0])
+        self.assertFalse(marker.exists())
+
+    def test_cli_key_switches_override_config(self):
+        source = self.setup_source()
+        self.fake_ssh()
+        config = self.base / 'setup.conf'
+        config.write_text('DEPLOY_KEY_FILE=missing-key\n')
+        self.run_cmd(*self.local_args(source), '--skip-deploy-key', '--config', str(config))
+        self.assertFalse((self.home / '.ssh').exists())
+        config.write_text('SKIP_DEPLOY_KEY=1\n')
+        key = self.base / 'deploy_key'
+        key.write_text('fixture-key\n')
+        self.run_cmd(*self.local_args(source), '--deploy-key', str(key), '--config', str(config))
+        self.assertEqual((self.home / '.ssh/id_ed25519').read_text(), 'fixture-key\n')
+
+    def test_invalid_config_or_mode_options_stop_before_ssh(self):
+        self.write_executable(self.bin / 'ssh', '#!/bin/bash\necho UNEXPECTED_SSH >&2; exit 91\n')
+        config = self.base / 'setup.conf'
+        config.write_text('SKIP_TOOLS=invalid\n')
+        base = ['/bin/bash', str(ROOT / 'setup.sh'), '--server', 'isu1:s1', '--skip-deploy-key']
+        cases = [
+            (['--mode', 'first', '--config', str(self.base / 'missing')], 'cannot read configuration'),
+            (['--mode', 'first', '--config', str(config)], 'must be 0 or 1'),
+            (['--mode', 'first', '--config', str(config), '--config', str(config)], 'only one --config'),
+            (['--mode', 'join', '--app-dir', 'src/go'], 'only supported in first mode'),
+            (['--mode', 'existing', '--skip-archive'], 'no helper backup options'),
+        ]
+        for tail, message in cases:
+            with self.subTest(tail=tail):
+                result = self.run_cmd(*base, *tail, check=False)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn(message, result.stderr)
+                self.assertNotIn('UNEXPECTED_SSH', result.stderr)
+                self.assertEqual(result.stdout, '')
+
+    def test_make_plan_with_shared_config_does_not_execute_ssh(self):
+        self.write_executable(self.bin / 'ssh', '#!/bin/bash\necho unexpected >&2; exit 91\n')
+        config = self.base / 'setup with spaces.conf'
+        config.write_text('SKIP_DEPLOY_KEY=1\nAPP_DIR=src/go\nEXTRA_IGNORES=(tools/)\nBACKUP_DIR=./copies\n')
+        result = self.run_cmd('make', '-C', str(ROOT), 'plan', 'MODE=first',
+                              'SERVER=isu1:s1', 'CONFIG=' + str(config))
+        self.assertIn('src/go', result.stdout)
+        backup_arg = next(arg for arg in shlex.split(result.stdout.splitlines()[0])
+                          if arg.startswith('OUT_DIR='))
+        self.assertEqual(Path(backup_arg.split('=', 1)[1]).resolve(), self.base / 'copies')
+        result = self.run_cmd('make', '-C', str(ROOT), 'plan', 'MODE=join',
+                              'SERVERS=isu2:s2 isu3:s3', 'CONFIG=' + str(config))
+        self.assertIn('isu2', result.stdout)
+        self.assertIn('isu3', result.stdout)
+        self.assertNotIn('src/go', result.stdout)
+        self.assertFalse((self.home / '.ssh').exists())
+        self.assertFalse((self.base / 'copies').exists())
+        self.assertFalse(self.calls.exists())
 
     def test_key_install_preserves_existing_key_and_argument_boundaries(self):
         source = self.setup_source()
@@ -214,6 +333,10 @@ PYTHON
                          'set ISUCON_ENV_TEST_SOURCE to a committed isucon-env clone for integration')
     def test_server_calls_real_env_init_and_join(self):
         source = Path(os.environ['ISUCON_ENV_TEST_SOURCE']).resolve()
+        setup_source = self.setup_source()
+        shutil.copy2(ROOT / 'setup-server.sh', setup_source / 'setup-server.sh')
+        self.commit_fixture(setup_source)
+        self.fake_ssh()
         clone = self.base / 'env-clone'
         self.run_cmd('git', 'clone', str(source), str(clone))
         ref = self.git(clone, 'symbolic-ref', '--short', 'HEAD').stdout.strip()
@@ -221,12 +344,18 @@ PYTHON
         self.run_cmd('git', 'init', '--bare', str(remote))
         (self.competition / 'go.mod').write_text('module example.test/competition\n')
         (self.competition / 'main.go').write_text('package main\n')
-        args = ['bash', str(ROOT / 'setup-server.sh'), '--mode', 'first', '--server-id', 's1',
-                '--home', str(self.competition), '--clone-dir', str(clone),
-                '--env-repo', str(source), '--env-ref', ref, '--branch', 'competition',
-                '--remote', str(remote), '--skip-keys', '--skip-tools', '--skip-config',
-                '--', '--skip-archive', '--app-dir', '.', '--app-bin', 'game',
-                '--ignore', 'extra-tool/']
+        config_file = self.base / 'setup.conf'
+        settings = dict(ISUCON_HOME=str(self.competition), SETUP_REPO=str(setup_source),
+                        SETUP_CLONE_DIR=str(self.base / 'server-setup'),
+                        CLONE_DIR=str(clone), ENV_REPO=str(source), ENV_REF=ref,
+                        BRANCH='competition', REMOTE=str(remote), APP_DIR='.', APP_BIN='game',
+                        SKIP_DEPLOY_KEY='1', SKIP_BACKUP='1', SKIP_KEYS='1', SKIP_TOOLS='1',
+                        SKIP_CONFIG='1', SKIP_ARCHIVE='1')
+        config_file.write_text(''.join(f'{name}={shlex.quote(value)}\n'
+                                       for name, value in settings.items()) +
+                               'EXTRA_IGNORES=(extra-tool/)\n')
+        args = ['bash', str(ROOT / 'setup.sh'), '--config', str(config_file),
+                '--mode', 'first', '--server', 'isu1:s1']
         result = self.run_cmd(*args)
         self.assertIn('Initialized:', result.stdout)
         tracked = self.git(self.competition, 'ls-files').stdout.splitlines()
@@ -243,11 +372,9 @@ PYTHON
         second = self.base / 'second'
         second.mkdir()
         (second / 'unique-data').write_text('preserve me\n')
-        result = self.run_cmd('bash', str(ROOT / 'setup-server.sh'), '--mode', 'join',
-                              '--server-id', 's2', '--home', str(second),
-                              '--clone-dir', str(clone), '--env-repo', str(source), '--env-ref', ref,
-                              '--branch', 'competition', '--remote', str(remote),
-                              '--skip-keys', '--skip-tools', '--skip-config', '--', '--skip-archive')
+        result = self.run_cmd('bash', str(ROOT / 'setup.sh'), '--mode', 'join',
+                              '--server', 'isu2:s2', '--home', str(second),
+                              '--config', str(config_file))
         self.assertTrue((second / 'main.go').exists())
         self.assertEqual((second / 'unique-data').read_text(), 'preserve me\n')
         self.assertEqual(self.git(second, 'rev-parse', 'competition').stdout,

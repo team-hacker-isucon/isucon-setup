@@ -5,6 +5,7 @@ fetched/
 # 事前準備で手元生成するデプロイキー(ここで生成してしまった場合の事故防止)
 /deploy_key
 /deploy_key.pub
+/setup.local.conf
 
 # Local Python regression-test cache
 __pycache__/

@@ -49,25 +49,52 @@ ssh-keygen -t ed25519 -N "" -f ./deploy_key -C "isucon-deploy"
 
 手元の `setup.sh` が、初期バックアップ・デプロイキー配置・サーバーでの鍵登録・Git 化・ツール導入・現設定の取り込みを順番に実行する。SSH の Host/IP/User/入口鍵は事前に `~/.ssh/config` へ設定し、GitHub に登録済みのデプロイ秘密鍵を手元のファイルで指定する。入口が ubuntu 等でも、非対話 sudo が使えればサーバー側の処理を isucon ユーザーで実行できる。isucon へ直接 SSH する場合も、30 の APT や設定コピーに使う sudo がパスワードなしで動くことを前提とする。秘密鍵・token・パスワードを引数の値へ直接書かない。
 
-以下は **setup と env の両方に、一括実行と init/join の変更が main へ反映された後**の例。未反映の場合は変更を含む公開済みブランチを `--setup-ref` / `--env-ref` に指定する。手元だけにある未公開ブランチはサーバーから clone できない。すでにサーバーにある clone は更新せず、指定した URL・ref と一致することを確認して再利用する。
+まず設定例をコピーし、アプリの場所・unit 名・成果物名・デプロイキーのパスを編集する。`setup.local.conf` は Git の管理対象から除外している。設定ファイルは Bash として読み込むため、自分で内容を確認したファイルを指定する。`--plan` でも設定ファイル自体は実行される。
 
-まず初台のみをセットアップする。下の `isucari/webapp/go` と `xbuild/` は ISUCON9 の配置例なので、競技ソースとツールの配置に合わせる。アプリの unit 名・成果物名が既定値と違う場合は、最後に `--app-service` / `--app-bin` も指定する。
+```sh
+cp setup.conf.example setup.local.conf
+# setup.local.conf を編集
+```
+
+設定例の `isucari/webapp/go` と `xbuild/` は ISUCON9 の配置例。今回の競技ソースとツールの配置に合わせる。`DEPLOY_KEY_FILE` と `BACKUP_DIR` の相対パスは設定ファイルのあるディレクトリを基準にする。引数で渡す手元のファイルパスは、実行時のディレクトリを基準にする。
+
+設定の優先順位は **コマンド引数 → 設定ファイル → 既定値**。`--config` の指定位置によらず、引数の値を使う。`--ignore` を引数で1つでも指定した場合は、設定ファイルの `EXTRA_IGNORES` を置き換える。複数指定するときは `--ignore` を繰り返す。設定ファイルを使わず、すべて引数で渡すこともできる。
+
+まず初台のみをセットアップする。
 
 ```sh
 # 計画表示。SSH・書き込み・コピーは行わない
-./setup.sh --mode first --server isu1:s1 --deploy-key ./deploy_key --plan \
-  -- --env-ref main -- --app-dir isucari/webapp/go --ignore xbuild/
+./setup.sh --config ./setup.local.conf --mode first --server isu1:s1 --plan
 
 # 初台を実行
-./setup.sh --mode first --server isu1:s1 --deploy-key ./deploy_key \
-  -- --env-ref main -- --app-dir isucari/webapp/go --ignore xbuild/
+./setup.sh --config ./setup.local.conf --mode first --server isu1:s1
 ```
+
+`make` からも同じ処理を呼べる。モードと対象サーバーは毎回明示する。
+
+```sh
+make plan MODE=first SERVER=isu1:s1
+make setup MODE=first SERVER=isu1:s1
+# 別の設定ファイルを使う場合: CONFIG=./competition.conf を追加
+```
+
+アプリの場所などをその場で指定する場合も、`--` で区切る必要はない。
+
+```sh
+./setup.sh --mode first --server isu1:s1 --deploy-key ./deploy_key \
+  --env-ref main --app-dir isucari/webapp/go --ignore xbuild/
+```
+
+従来の `-- SERVER_OPTIONS -- ENV_OPTIONS` 形式も利用できる。サーバー上の setup clone は指定 URL・ref と一致することを確認して再利用し、自動更新しない。未公開のローカルブランチはサーバーから clone できない。
 
 初台では `/home/isucon` が新しい Git ルートになる。バックアップ結果・除外ファイル・`config.mk`・取り込んだ設定を確認し、必要な差分を自分で commit/push する。その push が済んでから、他台に共有履歴を配置する。
 
 ```sh
-./setup.sh --mode join --server isu2:s2 --server isu3:s3 --deploy-key ./deploy_key
+./setup.sh --config ./setup.local.conf --mode join --server isu2:s2 --server isu3:s3
+# または: make setup MODE=join SERVERS="isu2:s2 isu3:s3"
 ```
+
+設定ファイルのアプリ設定と `EXTRA_IGNORES` は `first` だけで使い、`join` / `existing` では共有履歴の設定を使う。`ARCHIVE_DIR` / `SKIP_ARCHIVE` は `first` / `join` だけで使う。このため、同じ設定ファイルを各モードで指定できる。引数で明示した初台専用オプションは、`join` / `existing` では誤指定として停止する。
 
 `join` は既存のホーム直下 `.git` がないサーバー向けの明示的な合流操作。ホームのバックアップを試み、初台が push したブランチを fetch してから管理対象を共有履歴へ合わせる。既存ファイルを置換する場合は、サーバー内バックアップの成功が必要。バックアップが失敗・省略されても衝突がなければ合流でき、衝突する場合は原本を残して停止する。入れ子の `.git` や未追跡ファイルを一括削除する操作は行わない。既存ファイルと共有履歴が衝突する場合の保存・停止条件は、使用する env の `scripts/join-repo.sh --help` と README を確認する。初台用の `--app-dir` / `--ignore` 等は join では受け付けず、共有履歴の設定を使う。複数の `--server` は順に実行し、1台で失敗したら後続は実行しない。再開時は各台の完了段階に応じて first/join/existing を選ぶ。
 
@@ -79,20 +106,26 @@ ssh-keygen -t ed25519 -N "" -f ./deploy_key -C "isucon-deploy"
 
 | 引数 | 用途 |
 | --- | --- |
+| `--config FILE` | ローカルの Bash 設定。対応する変数は `setup.conf.example` を参照 |
 | `--server HOST:sN` | SSH Host とサーバー ID。join/existing では繰り返し指定可。first は1台だけ |
 | `--home PATH` | 競技 Git ルートとバックアップ元。既定 `/home/isucon` |
 | `--entry-user USER` | 10 が公開鍵を追加する入口アカウント。SSH ログインユーザーは SSH config の User で指定 |
 | `--setup-ref REF` / `--setup-clone-dir PATH` | サーバーに置く setup の ref と clone 先。既定 `main` / `HOME/isucon-setup` |
 | `--backup-dir PATH` / `--skip-backup` | 手元の先行バックアップ先 / その省略。env と30のサーバー内バックアップは別に試行 |
 | `--deploy-key FILE` / `--skip-deploy-key` | デプロイ秘密鍵ファイルの配布 / 既存の認証を使う |
-| 最初の `--` の後 | `setup-server.sh` の引数。`--env-ref` / `--env-repo` / `--clone-dir` / `--branch` / `--remote` / `--skip-keys` / `--skip-tools` / `--skip-config` 等 |
-| 2個目の `--` の後 | env helper の引数。first は init の競技設定・反復 `--ignore`・バックアップ設定、join は `--archive-dir` / `--skip-archive` |
+| `--env-ref` / `--env-repo` / `--clone-dir` | env の ref・URL・clone 先 |
+| `--branch` / `--remote` | 競技リポジトリのブランチと origin |
+| `--app-dir` / `--app-service` / `--app-bin` | 初台のアプリ配置・unit 名・成果物名 |
+| `--mysql-conf-dir` / `--nginx-access-log` / `--mysql-slow-log` | 初台の設定・ログのパス |
+| `--ignore PATTERN` / `--max-file-size-mib N` | 初台の追加除外（反復可）・大容量ファイルの除外基準 |
+| `--archive-dir` / `--skip-archive` | first/join のサーバー内バックアップ先・その省略 |
+| `--skip-keys` / `--skip-tools` / `--skip-config` | 鍵登録・ツール導入・設定取り込みの省略 |
 
-共通の `--home` は最初の `--` より前、`--branch` / `--remote` は env 引数へ渡す区切りより前に指定する。`--clone-dir` は env の clone 先で、setup の clone 先とは別。パス・競技設定は ASCII 英数字と `_./:@+-` のみを使う。`--env-repo` / `--setup-repo` は認証情報を含まない SSH URL または HTTPS URL にし、既存 clone の origin と同じ値を指定する。既存 clone の ref が違う場合は勝手に切り替えず停止する。Git の SSH 接続は、このコマンドと子プロセスの範囲で `BatchMode=yes`・`StrictHostKeyChecking=accept-new`・接続待ち10秒を既定にする。初めての host key は登録し、変更された key は拒否する。呼び出し元が `GIT_SSH_COMMAND` を設定している場合はその指定を保つ。
+すべてのオプションを `setup.sh` に直接指定できる。従来形式を使う場合、共通の `--home` は最初の `--` より前に指定する。`--clone-dir` は env の clone 先で、setup の clone 先とは別。サーバー側のパス・競技設定は ASCII 英数字と `_./:@+-` のみを使う。`--env-repo` / `--setup-repo` は認証情報を含まない SSH URL または HTTPS URL にし、既存 clone の origin と同じ値を指定する。既存 clone の ref が違う場合は勝手に切り替えず停止する。Git の SSH 接続は、このコマンドと子プロセスの範囲で `BatchMode=yes`・`StrictHostKeyChecking=accept-new`・接続待ち10秒を既定にする。初めての host key は登録し、変更された key は拒否する。呼び出し元が `GIT_SSH_COMMAND` を設定している場合はその指定を保つ。
 
 デプロイキーの配置先は isucon アカウントの実ホームの `.ssh/id_ed25519`。`--home` で競技 Git ルートを変えても認証鍵の場所は変えない。`.ssh` は700、鍵は600とし、同じ鍵があれば再利用し、異なる既存鍵やシンボリックリンクは上書きせず停止する。鍵の内容は SSH の標準入力で送り、コマンド引数やログへ表示しない。
 
-`get-conf` は現在の nginx/MySQL/アプリ unit/env.sh を private な競技リポジトリへコピーし、`set-as-sN` はホームの `env.sh` にサーバー ID を設定する。これらを省く場合は最初の `--` の後に `--skip-config` を指定する。一括実行は push、設定の deploy、競技サービスの restart、LTSV/slow log/pprof 等の計測設定を実行しない。計測やデプロイは、取り込んだ設定を確認して env README の手順で行う。2台目でホームやアプリ配置が初台と異なる場合は、共有した `config.mk` を確認してから設定取り込みへ進める。
+`get-conf` は現在の nginx/MySQL/アプリ unit/env.sh を private な競技リポジトリへコピーし、`set-as-sN` はホームの `env.sh` にサーバー ID を設定する。これらを省く場合は `--skip-config` を指定する。一括実行は push、設定の deploy、競技サービスの restart、LTSV/slow log/pprof 等の計測設定を実行しない。計測やデプロイは、取り込んだ設定を確認して env README の手順で行う。2台目でホームやアプリ配置が初台と異なる場合は、共有した `config.mk` を確認してから設定取り込みへ進める。
 
 サーバーへ自分でログインして開始する場合は `setup-server.sh` だけでも同じ処理をまとめられる。この入口は手元バックアップや秘密鍵配布を行わない。
 
@@ -104,6 +137,8 @@ bash /home/isucon/isucon-setup/setup-server.sh \
 ```
 
 個々の処理だけ実行したい場合は、下の手順と既存の 00/10/30 を引き続き利用できる。
+
+一括実行が止まった場合や、作業を1段階ずつ確認したい場合は [手動セットアップ手順](manual/README.md) を使う。手元でのバックアップ、鍵の配置、初台の Git 化、他台の合流、ツール導入、途中停止からの復旧を分けて記載している。00/10/30 が動かない場合の直接コマンドと、サーバー用の設定例も用意している。
 
 ## 当日の初動(サーバーごと)
 
@@ -129,8 +164,6 @@ scp ./deploy_key isu1:.ssh/id_ed25519    # isu2 / isu3 にも同じ鍵を配る
 ssh isu1 'chmod 600 ~/.ssh/id_ed25519'
 
 # 3. Git 初期化は isucon-env 側で実行する(1台目のみ)
-#    env PR #1 / #2 が main に反映済みなら main を使う。
-#    未マージの間は下の値を fix/vm-home-ignore に変更する。
 ENV_BRANCH=main
 git clone --branch "$ENV_BRANCH" git@github.com:team-hacker-isucon/isucon-env.git ~/isucon-env
 bash ~/isucon-env/scripts/init-repo.sh --home /home/isucon
@@ -150,7 +183,7 @@ cd ~/isucon-setup
 
 `20-init-repo.sh` は移行先を表示して exit 2 で終了する。ホームの初期化・言語削除・通信・push は行わず、旧引数や `FORCE` / `KEEP_LANG` 等も引き継がない。初期化の入口を `isucon-env/scripts/init-repo.sh` に統一し、古い Git の `git init -b`、`webapp` 固定、容量不足や大容量ファイルによる中断が残る旧実装は実行しない。
 
-新しい手順には [isucon-env PR #1](https://github.com/team-hacker-isucon/isucon-env/pull/1) のホーム初期化と、[isucon-env PR #2](https://github.com/team-hacker-isucon/isucon-env/pull/2) (`fix/vm-home-ignore`) の VM ログ対策が必要。未マージの間は、対応するブランチを明示して clone する。詳細な引数・除外対象・途中停止時の復旧は [isucon-env README](https://github.com/team-hacker-isucon/isucon-env#readme) を参照する。
+詳細な引数・除外対象は [isucon-env README](https://github.com/team-hacker-isucon/isucon-env#readme)、段階ごとの手動操作と途中停止時の復旧は [手動セットアップ手順](manual/README.md) を参照する。
 
 すでに旧 20 を実行して途中停止したホームでは `.git` を消さない。`git status`、`git log --oneline -5`、`git remote -v` を確認する。push の切断だけではローカルのコミットは失われないため、新スクリプトで二重に初期化せず、履歴と接続先を確認してから続きを実行する。キャッシュが古い履歴に入っている場合は、新しい ignore だけでは過去の Git object を減らせない。履歴の共有・push の反映状況を確認してから整理する。
 

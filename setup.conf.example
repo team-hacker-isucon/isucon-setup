@@ -1,0 +1,35 @@
+# Copy to setup.local.conf and edit for the competition (Bash syntax).
+# Local configuration is ignored by Git. Store key paths, never key contents.
+ISUCON_HOME=/home/isucon
+DEPLOY_KEY_FILE=./deploy_key  # Relative to this configuration file's directory.
+
+# First mode only. join/existing use the configuration in the shared Git history.
+APP_DIR=isucari/webapp/go
+APP_SERVICE=isuapp.go.service
+APP_BIN=isuapp
+EXTRA_IGNORES=(xbuild/)
+
+# Optional settings (uncomment as needed).
+# ENTRY_USER=ubuntu
+# SETUP_REPO=https://github.com/team-hacker-isucon/isucon-setup.git
+# SETUP_REF=main
+# SETUP_CLONE_DIR=/home/isucon/isucon-setup
+# ENV_REPO=git@github.com:team-hacker-isucon/isucon-env.git
+# ENV_REF=main
+# CLONE_DIR=/home/isucon/isucon-env
+# BRANCH=main
+# REMOTE=git@github.com:team-hacker-isucon/isucon-env.git
+# MYSQL_CONF_DIR=/etc/mysql
+# NGINX_ACCESS_LOG=/var/log/nginx/access.log
+# MYSQL_SLOW_LOG=/var/log/mysql/mysql-slow.log
+# MAX_FILE_SIZE_MIB=50
+# BACKUP_DIR=./backup  # Local; relative to this configuration file's directory.
+# ARCHIVE_DIR=/home/isucon-backups  # On the server; first/join only.
+
+# Skip switches accept 0 or 1; default is 0.
+# SKIP_DEPLOY_KEY=0  # To use 1, also clear DEPLOY_KEY_FILE.
+# SKIP_BACKUP=0
+# SKIP_ARCHIVE=0
+# SKIP_KEYS=0
+# SKIP_TOOLS=0
+# SKIP_CONFIG=0
