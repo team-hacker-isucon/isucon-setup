@@ -45,6 +45,35 @@ ssh-keygen -t ed25519 -N "" -f ./deploy_key -C "isucon-deploy"
 #    ※ 10-add-members-keys.sh の MEMBERS は記入済み(Lumonde-software / oshamashama / ryouta-uemura)
 ```
 
+## 初回の公開鍵登録(clone 前に直接追加する場合)
+
+メンバー個人の鍵で最初から SSH できるか分からない場合は、最初の担当者が大会配布の初期接続鍵または管理コンソールでサーバーに入り、次の1行を実行する。リポジトリの clone や `10-add-members-keys.sh` を使わず、`Lumonde-software`・`oshamashama`・`ryouta-uemura` の GitHub 公開鍵を `isucon` に追加する。各サーバーで実行する。
+
+```bash
+sudo -iu isucon bash -c 'set -e; umask 077; keys_tmp=$(mktemp); cleanup() { rm -f "$keys_tmp"; }; trap cleanup EXIT; for member in Lumonde-software oshamashama ryouta-uemura; do curl -fsS "https://github.com/${member}.keys" >> "$keys_tmp"; printf "\n" >> "$keys_tmp"; done; install -d -m 700 "$HOME/.ssh"; auth="$HOME/.ssh/authorized_keys"; touch "$auth"; chmod 600 "$auth"; printf "\n" >> "$auth"; cat "$keys_tmp" >> "$auth"; sort -u "$auth" -o "$auth"'
+```
+
+3人分の取得処理が成功してから追記する。既存の鍵は残し、重複する行を除去する。`.ssh` は700、`authorized_keys` は600に設定する。
+
+このワンライナーは `isucon` への鍵追加に絞っており、`10-add-members-keys.sh` の次の機能は含まない。
+
+| 省いた機能 | `10-add-members-keys.sh` の処理 |
+| --- | --- |
+| 入口ユーザーへの鍵追加 | `ubuntu` などにも同じ鍵を登録 |
+| SSH 接続制限の確認 | `AllowUsers`・`DenyUsers`・鍵認証の無効化などを確認して警告 |
+| 取得した鍵が0本の場合の停止 | 空行を除去し、公開鍵がなければ停止 |
+| ログと結果表示 | 実行ログ、失敗箇所、登録前後の鍵数を記録 |
+
+実行後は元の接続を残し、手元の別ターミナルで個人の鍵による接続を確認する。秘密鍵のパスと IP は実際の値に置き換える。
+
+```sh
+ssh -i "$HOME/.ssh/個人鍵のファイル名" isucon@サーバーIP
+```
+
+`isucon` への直接 SSH が禁止されている環境では、鍵の追加が成功しても接続できない。入口ユーザーにはこのワンライナーで鍵を追加していないため、初期接続鍵で入口ユーザーへ接続するか、`10-add-members-keys.sh` で入口ユーザーにも公開鍵を登録する。
+
+接続を確認したら、以下の一括セットアップへ進む。`setup.sh` 自体も SSH を使うため、初期接続手段がない状態から公開鍵を登録することはできない。
+
 ## 初動をまとめて実行する
 
 手元の `setup.sh` が、初期バックアップ・デプロイキー配置・サーバーでの鍵登録・Git 化・ツール導入・現設定の取り込みを順番に実行する。SSH の Host/IP/User/入口鍵は事前に `~/.ssh/config` へ設定し、GitHub に登録済みのデプロイ秘密鍵を手元のファイルで指定する。入口が ubuntu 等でも、非対話 sudo が使えればサーバー側の処理を isucon ユーザーで実行できる。isucon へ直接 SSH する場合も、30 の APT や設定コピーに使う sudo がパスワードなしで動くことを前提とする。秘密鍵・token・パスワードを引数の値へ直接書かない。
